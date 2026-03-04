@@ -12,6 +12,10 @@
 *.wav
 .runtime/
 
+# Xcode user state
+xcuserdata/
+*.xcuserstate
+
 # CamillaDSP runtime files
 camilladsp.log
 state.json
