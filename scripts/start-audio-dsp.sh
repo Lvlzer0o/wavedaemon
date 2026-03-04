@@ -67,26 +67,40 @@ if ! "$CAMILLADSP_BIN" --check "$CONFIG" >/dev/null 2>&1; then
   exit 1
 fi
 
-nohup "$CAMILLADSP_BIN" \
-  --loglevel info \
-  --logfile "$LOGFILE" \
-  --address "$WS_ADDRESS" \
-  --port "$WS_PORT" \
-  --statefile "$STATEFILE" \
-  "$CONFIG" >/dev/null 2>&1 &
+(
+  cd "$REPO_ROOT"
+  nohup "$CAMILLADSP_BIN" \
+    --loglevel info \
+    --logfile "$LOGFILE" \
+    --address "$WS_ADDRESS" \
+    --port "$WS_PORT" \
+    --statefile "$STATEFILE" \
+    "$CONFIG" >/dev/null 2>&1
+) &
 
 pid=$!
 echo "$pid" > "$PIDFILE"
-sleep 1
 
-if kill -0 "$pid" 2>/dev/null; then
-  echo "CamillaDSP started (PID $pid)."
-  echo "Config: $CONFIG"
-  echo "Log: $LOGFILE"
-  echo "WebSocket: ws://$WS_ADDRESS:$WS_PORT"
-  exit 0
-fi
+for _ in $(seq 1 50); do
+  if lsof -nP -iTCP:"$WS_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "CamillaDSP started (PID $pid)."
+    echo "Config: $CONFIG"
+    echo "Log: $LOGFILE"
+    echo "WebSocket: ws://$WS_ADDRESS:$WS_PORT"
+    exit 0
+  fi
 
-rm -f "$PIDFILE"
-echo "CamillaDSP exited immediately. Check log: $LOGFILE"
+  if ! kill -0 "$pid" 2>/dev/null; then
+    rm -f "$PIDFILE"
+    echo "CamillaDSP exited during startup. Tail of log:"
+    tail -n 120 "$LOGFILE" || true
+    exit 1
+  fi
+
+  sleep 0.1
+done
+
+echo "CamillaDSP is running but WebSocket never opened on ws://$WS_ADDRESS:$WS_PORT."
+echo "Tail of log:"
+tail -n 120 "$LOGFILE" || true
 exit 1

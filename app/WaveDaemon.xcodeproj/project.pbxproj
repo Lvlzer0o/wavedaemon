@@ -10,6 +10,16 @@
 		2F6E53002F58D2A400244476 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2F6E53022F58D2A400244476 /* XCTest.framework */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		2F6E53092F58D2A400244476 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 2F6E52D72F58C3EA00244476 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 2F6E52DE2F58C3EA00244476;
+			remoteInfo = WaveDaemon;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		2F6E52DF2F58C3EA00244476 /* WaveDaemon.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WaveDaemon.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		2F6E53012F58D2A400244476 /* WaveDaemonTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = WaveDaemonTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -124,16 +134,6 @@
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
 /* End PBXNativeTarget section */
-
-/* Begin PBXContainerItemProxy section */
-		2F6E53092F58D2A400244476 /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = 2F6E52D72F58C3EA00244476 /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = 2F6E52DE2F58C3EA00244476;
-			remoteInfo = WaveDaemon;
-		};
-/* End PBXContainerItemProxy section */
 
 /* Begin PBXProject section */
 		2F6E52D72F58C3EA00244476 /* Project object */ = {
@@ -341,7 +341,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
-				ENABLE_APP_SANDBOX = YES;
+				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
@@ -372,7 +372,8 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
-				ENABLE_APP_SANDBOX = YES;
+				DEVELOPMENT_TEAM = G3353TKAAS;
+				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
@@ -426,6 +427,7 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = G3353TKAAS;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
