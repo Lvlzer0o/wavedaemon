@@ -9,7 +9,6 @@
 *.log
 *.pid
 *.state
-*.wav
 .runtime/
 
 # Xcode user state

@@ -2,6 +2,32 @@ import SwiftUI
 import Combine
 
 struct ContentView: View {
+    private enum ReverbStyle: String, CaseIterable, Identifiable {
+        case smallRoom = "Small Room"
+        case vocalPlate = "Vocal Plate"
+        case largeHall = "Large Hall"
+
+        var id: String { rawValue }
+
+        var profileStem: String {
+            switch self {
+            case .smallRoom:
+                return "small_room"
+            case .vocalPlate:
+                return "vocal_plate"
+            case .largeHall:
+                return "large_hall"
+            }
+        }
+    }
+
+    private enum ReverbQuality: String, CaseIterable, Identifiable {
+        case standard = "Standard"
+        case high = "High"
+
+        var id: String { rawValue }
+    }
+
     @StateObject private var camilla = CamillaWebSocket()
 
     private let profileStore = ProfileStore()
@@ -10,6 +36,9 @@ struct ContentView: View {
     @State private var websocketURL = DSPManager.defaultWebSocketURLString()
     @State private var profiles: [AudioProfile] = []
     @State private var selectedProfileName = ""
+    @State private var reverbStyle: ReverbStyle = .vocalPlate
+    @State private var reverbQuality: ReverbQuality = .high
+    @State private var lastDryProfileName = "flat.yml"
     @State private var volumeDB: Double = 0
     @State private var statusMessage = "Disconnected"
     @State private var isDSPRunning = false
@@ -72,6 +101,43 @@ struct ContentView: View {
 
                 Button("Refresh", action: loadProfiles)
                     .accessibilityIdentifier("refreshProfilesButton")
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Reverb")
+                    .font(.headline)
+
+                HStack(spacing: 12) {
+                    Picker("Style", selection: $reverbStyle) {
+                        ForEach(ReverbStyle.allCases) { style in
+                            Text(style.rawValue).tag(style)
+                        }
+                    }
+                    .accessibilityIdentifier("reverbStylePicker")
+
+                    Picker("Quality", selection: $reverbQuality) {
+                        ForEach(ReverbQuality.allCases) { quality in
+                            Text(quality.rawValue).tag(quality)
+                        }
+                    }
+                    .accessibilityIdentifier("reverbQualityPicker")
+                }
+
+                HStack(spacing: 12) {
+                    Button("Apply Reverb", action: applyReverb)
+                        .disabled(!camilla.isConnected)
+                        .accessibilityIdentifier("applyReverbButton")
+
+                    Button("Bypass Reverb", action: bypassReverb)
+                        .disabled(!camilla.isConnected)
+                        .accessibilityIdentifier("bypassReverbButton")
+                }
+
+                Text("High quality uses generated *_hq impulse responses when available.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Divider()
@@ -222,6 +288,13 @@ struct ContentView: View {
                 selectedProfileName = profiles.first?.name ?? ""
             }
 
+            if let flatProfile = profiles.first(where: { $0.name == "flat.yml" }) {
+                lastDryProfileName = flatProfile.name
+            } else if !lastDryProfileName.isEmpty,
+                      !profiles.contains(where: { $0.name == lastDryProfileName }) {
+                lastDryProfileName = ""
+            }
+
             if profiles.isEmpty {
                 statusMessage = "No profiles found in dsp/profiles"
             }
@@ -246,15 +319,90 @@ struct ContentView: View {
             return
         }
 
+        performProfileApply(
+            selectedProfile,
+            statusPrefix: "Applied profile",
+            updateDryBaseline: !isReverbProfileName(selectedProfile.name)
+        )
+    }
+
+    private func applyReverb() {
+        guard camilla.isConnected else {
+            statusMessage = "Connect to CamillaDSP first"
+            return
+        }
+
+        guard let profile = resolvedReverbProfile() else {
+            statusMessage = "No reverb profile found for \(reverbStyle.rawValue) (\(reverbQuality.rawValue))"
+            return
+        }
+
+        selectedProfileName = profile.name
+        performProfileApply(profile, statusPrefix: "Applied reverb", updateDryBaseline: false)
+    }
+
+    private func bypassReverb() {
+        guard camilla.isConnected else {
+            statusMessage = "Connect to CamillaDSP first"
+            return
+        }
+
+        let fallbackNames = [lastDryProfileName, "flat.yml", "laptop_speakers.yml"]
+        guard let profile = fallbackNames
+            .compactMap({ name in profiles.first(where: { $0.name == name }) })
+            .first else {
+            statusMessage = "No dry profile found. Select a profile and click Apply Profile."
+            return
+        }
+
+        selectedProfileName = profile.name
+        performProfileApply(profile, statusPrefix: "Bypassed reverb with", updateDryBaseline: true)
+    }
+
+    private func performProfileApply(
+        _ profile: AudioProfile,
+        statusPrefix: String,
+        updateDryBaseline: Bool
+    ) {
         Task {
             do {
-                let configText = try String(contentsOf: selectedProfile.fileURL, encoding: .utf8)
+                let configText = try String(contentsOf: profile.fileURL, encoding: .utf8)
                 try await camilla.applyProfile(configText: configText)
-                statusMessage = "Applied profile: \(selectedProfileName)"
+                if updateDryBaseline && !isReverbProfileName(profile.name) {
+                    lastDryProfileName = profile.name
+                }
+                statusMessage = "\(statusPrefix): \(profile.name)"
             } catch {
                 statusMessage = "Profile apply failed: \(error.localizedDescription)"
             }
         }
+    }
+
+    private func resolvedReverbProfile() -> AudioProfile? {
+        let preferredNames = preferredReverbProfileNames(for: reverbStyle, quality: reverbQuality)
+        return preferredNames.compactMap { name in
+            profiles.first(where: { $0.name == name })
+        }.first
+    }
+
+    private func preferredReverbProfileNames(
+        for style: ReverbStyle,
+        quality: ReverbQuality
+    ) -> [String] {
+        let standardName = "\(style.profileStem).yml"
+        switch quality {
+        case .standard:
+            return [standardName]
+        case .high:
+            return ["\(style.profileStem)_hq.yml", standardName]
+        }
+    }
+
+    private func isReverbProfileName(_ name: String) -> Bool {
+        let normalized = name.lowercased()
+        return normalized.contains("small_room")
+            || normalized.contains("vocal_plate")
+            || normalized.contains("large_hall")
     }
 
     private func handleVolumeEditing(_ editing: Bool) {
