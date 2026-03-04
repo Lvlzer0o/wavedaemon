@@ -32,12 +32,15 @@ struct ContentView: View {
 
     private let profileStore = ProfileStore()
     private let dspManager = DSPManager.shared
+    private let reverbMixRenderer = ReverbMixRenderer()
 
     @State private var websocketURL = DSPManager.defaultWebSocketURLString()
     @State private var profiles: [AudioProfile] = []
     @State private var selectedProfileName = ""
     @State private var reverbStyle: ReverbStyle = .vocalPlate
     @State private var reverbQuality: ReverbQuality = .high
+    @State private var reverbWetPercent: Double = 28.0
+    @State private var reverbDryPercent: Double = 86.0
     @State private var lastDryProfileName = "flat.yml"
     @State private var volumeDB: Double = 0
     @State private var statusMessage = "Disconnected"
@@ -133,6 +136,18 @@ struct ContentView: View {
                     Button("Bypass Reverb", action: bypassReverb)
                         .disabled(!camilla.isConnected)
                         .accessibilityIdentifier("bypassReverbButton")
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Wet: \(Int(reverbWetPercent.rounded()))%")
+                    Slider(value: $reverbWetPercent, in: 0...100, step: 1)
+                        .accessibilityIdentifier("reverbWetSlider")
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Dry: \(Int(reverbDryPercent.rounded()))%")
+                    Slider(value: $reverbDryPercent, in: 0...100, step: 1)
+                        .accessibilityIdentifier("reverbDrySlider")
                 }
 
                 Text("High quality uses generated *_hq impulse responses when available.")
@@ -338,7 +353,7 @@ struct ContentView: View {
         }
 
         selectedProfileName = profile.name
-        performProfileApply(profile, statusPrefix: "Applied reverb", updateDryBaseline: false)
+        performReverbApply(profile)
     }
 
     private func bypassReverb() {
@@ -374,6 +389,27 @@ struct ContentView: View {
                 statusMessage = "\(statusPrefix): \(profile.name)"
             } catch {
                 statusMessage = "Profile apply failed: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func performReverbApply(_ profile: AudioProfile) {
+        Task {
+            do {
+                let profileText = try String(contentsOf: profile.fileURL, encoding: .utf8)
+                let mixedConfig = try reverbMixRenderer.renderMixedConfig(
+                    profileURL: profile.fileURL,
+                    profileText: profileText,
+                    wetPercent: reverbWetPercent,
+                    dryPercent: reverbDryPercent
+                )
+                try await camilla.applyProfile(configText: mixedConfig)
+                statusMessage = """
+                Applied reverb: \(profile.name) \
+                (Wet \(Int(reverbWetPercent.rounded()))%, Dry \(Int(reverbDryPercent.rounded()))%)
+                """
+            } catch {
+                statusMessage = "Reverb apply failed: \(error.localizedDescription)"
             }
         }
     }
