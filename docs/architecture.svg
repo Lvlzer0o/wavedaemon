@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="900" viewBox="0 0 980 900" role="img" aria-label="WaveDaemon architecture diagram">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f9fbff" />
+      <stop offset="100%" stop-color="#eef4ff" />
+    </linearGradient>
+    <style>
+      .title { font: 700 30px 'SF Pro Display', 'Segoe UI', Helvetica, Arial, sans-serif; fill: #14213d; }
+      .subtitle { font: 500 17px 'SF Pro Text', 'Segoe UI', Helvetica, Arial, sans-serif; fill: #2d4059; }
+      .box { fill: #ffffff; stroke: #1f3c88; stroke-width: 2; rx: 14; }
+      .label { font: 600 18px 'SF Pro Text', 'Segoe UI', Helvetica, Arial, sans-serif; fill: #102a43; }
+      .sublabel { font: 500 14px 'SF Pro Text', 'Segoe UI', Helvetica, Arial, sans-serif; fill: #486581; }
+      .arrow { stroke: #1f3c88; stroke-width: 3; fill: none; marker-end: url(#arrowhead); }
+      .panel { fill: #edf2ff; stroke: #aac4ff; stroke-width: 1.5; rx: 12; }
+    </style>
+    <marker id="arrowhead" markerWidth="10" markerHeight="8" refX="7" refY="4" orient="auto">
+      <polygon points="0 0, 10 4, 0 8" fill="#1f3c88" />
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="980" height="900" fill="url(#bg)" />
+  <text x="490" y="52" text-anchor="middle" class="title">WaveDaemon System Architecture</text>
+  <text x="490" y="82" text-anchor="middle" class="subtitle">CoreAudio + BlackHole + CamillaDSP + Live Web Control</text>
+
+  <rect x="240" y="115" width="500" height="94" class="box" />
+  <text x="490" y="156" text-anchor="middle" class="label">macOS Apps / System Audio</text>
+  <text x="490" y="181" text-anchor="middle" class="sublabel">Browsers, media players, games, DAWs</text>
+
+  <path d="M490 209 L490 251" class="arrow" />
+
+  <rect x="240" y="251" width="500" height="94" class="box" />
+  <text x="490" y="292" text-anchor="middle" class="label">CoreAudio: &lt;multi-output-device&gt;</text>
+  <text x="490" y="317" text-anchor="middle" class="sublabel">routes to hardware + DSP path simultaneously</text>
+
+  <path d="M490 345 L490 387" class="arrow" />
+
+  <rect x="240" y="387" width="500" height="94" class="box" />
+  <text x="490" y="428" text-anchor="middle" class="label">BlackHole 2ch (Virtual Loopback)</text>
+  <text x="490" y="453" text-anchor="middle" class="sublabel">capture source for WaveDaemon</text>
+
+  <path d="M490 481 L490 523" class="arrow" />
+
+  <rect x="240" y="523" width="500" height="94" class="box" />
+  <text x="490" y="564" text-anchor="middle" class="label">WaveDaemon (CamillaDSP Engine)</text>
+  <text x="490" y="589" text-anchor="middle" class="sublabel">system-wide processing + websocket control API</text>
+
+  <path d="M490 617 L490 659" class="arrow" />
+
+  <rect x="240" y="659" width="500" height="94" class="box" />
+  <text x="490" y="700" text-anchor="middle" class="label">DSP Chain</text>
+  <text x="490" y="724" text-anchor="middle" class="sublabel">10-band EQ -> Compressor -> Limiter -> Convolution</text>
+
+  <path d="M490 753 L490 795" class="arrow" />
+
+  <rect x="240" y="795" width="500" height="74" class="box" />
+  <text x="490" y="839" text-anchor="middle" class="label">Output: &lt;aggregate-output-device&gt; -> Speakers / Headphones</text>
+
+  <rect x="42" y="525" width="170" height="128" class="panel" />
+  <text x="127" y="561" text-anchor="middle" class="label" style="font-size:15px">Browser UI</text>
+  <text x="127" y="585" text-anchor="middle" class="sublabel">control.html</text>
+  <text x="127" y="607" text-anchor="middle" class="sublabel">localhost:9137</text>
+  <path d="M212 587 L238 587" class="arrow" />
+
+  <rect x="768" y="525" width="170" height="128" class="panel" />
+  <text x="853" y="561" text-anchor="middle" class="label" style="font-size:15px">WebSocket API</text>
+  <text x="853" y="585" text-anchor="middle" class="sublabel">ws://127.0.0.1:1234</text>
+  <text x="853" y="607" text-anchor="middle" class="sublabel">SetConfig / SetVolume</text>
+  <path d="M740 587 L768 587" class="arrow" />
+</svg>

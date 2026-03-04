@@ -1,10 +1,18 @@
 # WaveDaemon
 
+![Version](https://img.shields.io/badge/version-v0.1.0-blue)
+![Platform](https://img.shields.io/badge/platform-macOS-lightgrey)
+![License](https://img.shields.io/badge/license-MIT-green)
+
 System-wide audio DSP daemon for macOS.
 
 WaveDaemon is a production-focused CoreAudio stack built around CamillaDSP, BlackHole, and a live WebSocket control UI.
 
 ## Architecture
+
+![WaveDaemon Architecture](docs/architecture.svg)
+
+Signal path:
 
 ```text
 macOS
@@ -44,6 +52,7 @@ wavedaemon/
 │   ├── stop-audio-dsp.sh
 │   ├── start-audio-dsp-failsafe.sh
 │   ├── stop-audio-dsp-failsafe.sh
+│   ├── install-deps.sh
 │   ├── start-audio-control-ui.sh
 │   ├── stop-audio-control-ui.sh
 │   └── audio-stream-keepalive.sh
@@ -52,6 +61,7 @@ wavedaemon/
 ├── tools/
 │   └── latency-test.sh
 ├── docs/
+│   ├── architecture.svg
 │   └── routing.md
 ├── README.md
 ├── LICENSE
@@ -66,11 +76,18 @@ wavedaemon/
 - `camilladsp` binary available via `PATH` or `CAMILLADSP_BIN`
 - `switchaudio-osx`
 - `websocat`
+- `jq`
 
-Install helper tools:
+## Install
 
 ```bash
-brew install switchaudio-osx websocat
+./scripts/install-deps.sh
+```
+
+Manual fallback:
+
+```bash
+brew install camilladsp switchaudio-osx websocat jq
 brew install --cask blackhole-2ch
 ```
 
