@@ -6,14 +6,25 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		2F6E53002F58D2A400244476 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2F6E53022F58D2A400244476 /* XCTest.framework */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		2F6E52DF2F58C3EA00244476 /* WaveDaemon.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WaveDaemon.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		2F6E53012F58D2A400244476 /* WaveDaemonTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = WaveDaemonTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		2F6E53022F58D2A400244476 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		2F6E52E12F58C3EA00244476 /* WaveDaemon */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = WaveDaemon;
+			sourceTree = "<group>";
+		};
+		2F6E53032F58D2A400244476 /* WaveDaemonTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = WaveDaemonTests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -26,6 +37,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		2F6E53062F58D2A400244476 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				2F6E53002F58D2A400244476 /* XCTest.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -33,7 +52,9 @@
 			isa = PBXGroup;
 			children = (
 				2F6E52E12F58C3EA00244476 /* WaveDaemon */,
+				2F6E53032F58D2A400244476 /* WaveDaemonTests */,
 				2F6E52E02F58C3EA00244476 /* Products */,
+				2F6E53042F58D2A400244476 /* Frameworks */,
 			);
 			sourceTree = "<group>";
 		};
@@ -41,8 +62,17 @@
 			isa = PBXGroup;
 			children = (
 				2F6E52DF2F58C3EA00244476 /* WaveDaemon.app */,
+				2F6E53012F58D2A400244476 /* WaveDaemonTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		2F6E53042F58D2A400244476 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				2F6E53022F58D2A400244476 /* XCTest.framework */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -70,7 +100,40 @@
 			productReference = 2F6E52DF2F58C3EA00244476 /* WaveDaemon.app */;
 			productType = "com.apple.product-type.application";
 		};
+		2F6E53082F58D2A400244476 /* WaveDaemonTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 2F6E530D2F58D2A400244476 /* Build configuration list for PBXNativeTarget "WaveDaemonTests" */;
+			buildPhases = (
+				2F6E53052F58D2A400244476 /* Sources */,
+				2F6E53062F58D2A400244476 /* Frameworks */,
+				2F6E53072F58D2A400244476 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				2F6E530A2F58D2A400244476 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				2F6E53032F58D2A400244476 /* WaveDaemonTests */,
+			);
+			name = WaveDaemonTests;
+			packageProductDependencies = (
+			);
+			productName = WaveDaemonTests;
+			productReference = 2F6E53012F58D2A400244476 /* WaveDaemonTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
+
+/* Begin PBXContainerItemProxy section */
+		2F6E53092F58D2A400244476 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 2F6E52D72F58C3EA00244476 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 2F6E52DE2F58C3EA00244476;
+			remoteInfo = WaveDaemon;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXProject section */
 		2F6E52D72F58C3EA00244476 /* Project object */ = {
@@ -82,6 +145,10 @@
 				TargetAttributes = {
 					2F6E52DE2F58C3EA00244476 = {
 						CreatedOnToolsVersion = 26.4;
+					};
+					2F6E53082F58D2A400244476 = {
+						CreatedOnToolsVersion = 26.4;
+						TestTargetID = 2F6E52DE2F58C3EA00244476;
 					};
 				};
 			};
@@ -100,12 +167,20 @@
 			projectRoot = "";
 			targets = (
 				2F6E52DE2F58C3EA00244476 /* WaveDaemon */,
+				2F6E53082F58D2A400244476 /* WaveDaemonTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		2F6E52DD2F58C3EA00244476 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		2F6E53072F58D2A400244476 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -122,7 +197,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		2F6E53052F58D2A400244476 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		2F6E530A2F58D2A400244476 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 2F6E52DE2F58C3EA00244476 /* WaveDaemon */;
+			targetProxy = 2F6E53092F58D2A400244476 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		2F6E52E82F58C3EF00244476 /* Debug */ = {
@@ -160,7 +250,6 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
-				DEVELOPMENT_TEAM = G3353TKAAS;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -224,7 +313,6 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				DEVELOPMENT_TEAM = G3353TKAAS;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -253,7 +341,6 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = G3353TKAAS;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -265,7 +352,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = trentoncadena.WaveDaemon;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.lvlzer0o.WaveDaemon;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -285,7 +372,6 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = G3353TKAAS;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -297,7 +383,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = trentoncadena.WaveDaemon;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.lvlzer0o.WaveDaemon;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -306,6 +392,55 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		2F6E530B2F58D2A400244476 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.4;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.lvlzer0o.WaveDaemonTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/WaveDaemon.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/WaveDaemon";
+			};
+			name = Debug;
+		};
+		2F6E530C2F58D2A400244476 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.4;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.lvlzer0o.WaveDaemonTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/WaveDaemon.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/WaveDaemon";
 			};
 			name = Release;
 		};
@@ -326,6 +461,15 @@
 			buildConfigurations = (
 				2F6E52EB2F58C3EF00244476 /* Debug */,
 				2F6E52EC2F58C3EF00244476 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		2F6E530D2F58D2A400244476 /* Build configuration list for PBXNativeTarget "WaveDaemonTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				2F6E530B2F58D2A400244476 /* Debug */,
+				2F6E530C2F58D2A400244476 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

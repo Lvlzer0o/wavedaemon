@@ -1,42 +1,43 @@
-//
-//  ContentView.swift
-//  WaveDaemon
-//
-//  Created by Trenton Cadena on 3/4/26.
-//
-
 import SwiftUI
 
 struct ContentView: View {
-
-    static let greetingText = "Hello, world!"
+    @State private var statusMessage = "DSP stopped"
 
     var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-                .accessibilityIdentifier("globeIcon")
+        VStack(spacing: 16) {
+            Text("WaveDaemon")
+                .font(.title2)
+                .bold()
 
-            Text(Self.greetingText)
-                .accessibilityIdentifier("greetingText")
+            Text(statusMessage)
+                .accessibilityIdentifier("dspStatusText")
+
+            HStack(spacing: 12) {
+                Button("Start DSP", action: startDSP)
+                    .accessibilityIdentifier("startDSPButton")
+
+                Button("Stop DSP", action: stopDSP)
+                    .accessibilityIdentifier("stopDSPButton")
+            }
         }
         .padding()
+    }
+
+    private func startDSP() {
+        do {
+            let didStart = try DSPManager.shared.startDSP()
+            statusMessage = didStart ? "DSP running" : "DSP already running"
+        } catch {
+            statusMessage = "Failed to start DSP"
+        }
+    }
+
+    private func stopDSP() {
+        _ = DSPManager.shared.stopDSP()
+        statusMessage = "DSP stopped"
     }
 }
 
 #Preview {
     ContentView()
 }
-
-#if DEBUG
-import XCTest
-
-final class ContentViewTests: XCTestCase {
-
-    func testGreetingTextValue() {
-        XCTAssertEqual(ContentView.greetingText, "Hello, world!")
-    }
-
-}
-#endif
