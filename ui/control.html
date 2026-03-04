@@ -1,0 +1,704 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CamillaDSP Control</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #111827;
+      --panel-2: #1f2937;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --ok: #22c55e;
+      --warn: #f59e0b;
+      --err: #ef4444;
+      --accent: #38bdf8;
+      --border: #374151;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      background: radial-gradient(circle at top, #1e293b, var(--bg) 55%);
+      color: var(--text);
+    }
+
+    .wrap {
+      max-width: 920px;
+      margin: 24px auto;
+      padding: 0 16px 32px;
+    }
+
+    .card {
+      background: rgba(17, 24, 39, 0.92);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 14px;
+    }
+
+    h1 {
+      font-size: 20px;
+      margin: 0 0 8px;
+    }
+
+    h2 {
+      font-size: 14px;
+      margin: 0 0 8px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    label {
+      font-size: 12px;
+      color: var(--muted);
+      min-width: 110px;
+    }
+
+    input[type="text"], select, button, input[type="number"] {
+      background: var(--panel-2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px 10px;
+      font: inherit;
+      font-size: 13px;
+    }
+
+    input[type="text"] { width: 320px; max-width: 100%; }
+    input[type="number"] { width: 90px; }
+
+    button {
+      cursor: pointer;
+    }
+
+    button.primary {
+      border-color: #0369a1;
+      background: #0c4a6e;
+    }
+
+    button.warn {
+      border-color: #92400e;
+      background: #78350f;
+    }
+
+    button.good {
+      border-color: #166534;
+      background: #14532d;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: #0b1220;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--muted);
+    }
+
+    .dot.ok { background: var(--ok); }
+    .dot.err { background: var(--err); }
+
+    .kv {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(180px, 1fr));
+      gap: 8px;
+    }
+
+    .kv div {
+      border: 1px solid var(--border);
+      background: #0b1220;
+      border-radius: 8px;
+      padding: 8px;
+      font-size: 12px;
+    }
+
+    .k { color: var(--muted); display: block; margin-bottom: 2px; }
+    .v { color: var(--text); font-size: 13px; }
+
+    .meter {
+      width: 100%;
+      height: 12px;
+      background: #0b1220;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .meter > span {
+      display: block;
+      height: 100%;
+      width: 0;
+      background: linear-gradient(90deg, #22c55e, #84cc16 55%, #f59e0b 85%, #ef4444 100%);
+      transition: width 0.2s ease;
+    }
+
+    .log {
+      font-size: 12px;
+      color: var(--muted);
+      max-height: 150px;
+      overflow: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px;
+      background: #0b1220;
+      white-space: pre-wrap;
+    }
+
+    .eq-grid {
+      display: grid;
+      gap: 8px;
+    }
+
+    .eq-row {
+      display: grid;
+      grid-template-columns: 70px 1fr 80px;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .eq-row code {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .eq-row input[type="range"] {
+      width: 100%;
+    }
+
+    @media (max-width: 640px) {
+      input[type="text"] { width: 100%; }
+      .kv { grid-template-columns: 1fr; }
+      .eq-row { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>CamillaDSP Live Control</h1>
+      <div class="row">
+        <label for="wsUrl">WebSocket URL</label>
+        <input id="wsUrl" type="text" value="ws://127.0.0.1:1234">
+        <button id="connectBtn" class="primary">Connect</button>
+        <button id="disconnectBtn">Disconnect</button>
+        <span class="status"><span id="dot" class="dot"></span><span id="connText">Disconnected</span></span>
+      </div>
+      <div class="row">
+        <button id="reloadBtn" class="warn">Reload Active Config</button>
+        <button id="resetClipBtn">Reset Clipped Counter</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Profile Switch</h2>
+      <div class="row">
+        <label for="profileSelect">Profile</label>
+        <select id="profileSelect">
+          <option value="flat.yml">flat.yml</option>
+          <option value="bass_boost.yml">bass_boost.yml</option>
+          <option value="laptop_speakers.yml">laptop_speakers.yml</option>
+        </select>
+        <button id="applyProfileBtn" class="good">Apply Live (No Restart)</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>10-Band EQ</h2>
+      <div class="row">
+        <button id="eqPullBtn">Pull Active EQ</button>
+        <button id="eqZeroBtn">Set All 0 dB</button>
+        <span class="status"><span id="eqState">Idle</span></span>
+      </div>
+      <div id="eqGrid" class="eq-grid"></div>
+    </div>
+
+    <div class="card">
+      <h2>Main Fader</h2>
+      <div class="row">
+        <label for="volume">Volume (dB)</label>
+        <input id="volume" type="range" min="-60" max="12" step="0.5" value="0">
+        <input id="volumeNum" type="number" min="-60" max="12" step="0.5" value="0">
+        <button id="volDown">-1 dB</button>
+        <button id="volUp">+1 dB</button>
+        <button id="muteBtn">Toggle Mute</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Live Status</h2>
+      <div class="kv">
+        <div><span class="k">State</span><span id="stateVal" class="v">-</span></div>
+        <div><span class="k">Stop Reason</span><span id="stopVal" class="v">-</span></div>
+        <div><span class="k">Main Volume</span><span id="volVal" class="v">-</span></div>
+        <div><span class="k">Mute</span><span id="muteVal" class="v">-</span></div>
+        <div><span class="k">Processing Load</span><span id="loadVal" class="v">-</span></div>
+        <div><span class="k">Clipped Samples</span><span id="clipVal" class="v">-</span></div>
+      </div>
+      <div style="margin-top:10px;">
+        <span class="k">Playback RMS (ch0)</span>
+        <div class="meter"><span id="rmsBar"></span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Events</h2>
+      <div id="log" class="log">Ready.</div>
+    </div>
+  </div>
+
+  <script>
+    const wsUrlEl = document.getElementById("wsUrl");
+    const dotEl = document.getElementById("dot");
+    const connTextEl = document.getElementById("connText");
+    const logEl = document.getElementById("log");
+    const stateVal = document.getElementById("stateVal");
+    const stopVal = document.getElementById("stopVal");
+    const volVal = document.getElementById("volVal");
+    const muteVal = document.getElementById("muteVal");
+    const loadVal = document.getElementById("loadVal");
+    const clipVal = document.getElementById("clipVal");
+    const rmsBar = document.getElementById("rmsBar");
+    const volumeSlider = document.getElementById("volume");
+    const volumeNum = document.getElementById("volumeNum");
+    const profileSelect = document.getElementById("profileSelect");
+    const eqGrid = document.getElementById("eqGrid");
+    const eqStateEl = document.getElementById("eqState");
+    const eqBandDefs = [
+      { name: "eq_band_01", label: "31 Hz" },
+      { name: "eq_band_02", label: "62 Hz" },
+      { name: "eq_band_03", label: "125 Hz" },
+      { name: "eq_band_04", label: "250 Hz" },
+      { name: "eq_band_05", label: "500 Hz" },
+      { name: "eq_band_06", label: "1 kHz" },
+      { name: "eq_band_07", label: "2 kHz" },
+      { name: "eq_band_08", label: "4 kHz" },
+      { name: "eq_band_09", label: "8 kHz" },
+      { name: "eq_band_10", label: "16 kHz" }
+    ];
+
+    let ws = null;
+    let pollTimer = null;
+    const pending = new Map();
+    let activeConfigJson = null;
+    let eqApplyTimer = null;
+    let eqApplyInFlight = false;
+    let eqApplyQueued = false;
+
+    function log(msg) {
+      const stamp = new Date().toLocaleTimeString();
+      logEl.textContent = `[${stamp}] ${msg}\n` + logEl.textContent;
+    }
+
+    function setConn(connected) {
+      dotEl.classList.toggle("ok", connected);
+      dotEl.classList.toggle("err", !connected);
+      connTextEl.textContent = connected ? "Connected" : "Disconnected";
+    }
+
+    function wsUrlFromQueryOrStorage() {
+      const params = new URLSearchParams(window.location.search);
+      const queryWs = params.get("ws");
+      if (queryWs) return queryWs;
+      return localStorage.getItem("camilla_ws_url") || "ws://127.0.0.1:1234";
+    }
+
+    function commandName(command) {
+      return typeof command === "string" ? command : Object.keys(command)[0];
+    }
+
+    function request(command, timeoutMs = 2500) {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        return Promise.reject(new Error("WebSocket not connected"));
+      }
+      const name = commandName(command);
+      const payload = JSON.stringify(command);
+
+      return new Promise((resolve, reject) => {
+        const item = { resolve, reject, timeout: null };
+        item.timeout = setTimeout(() => {
+          const queue = pending.get(name) || [];
+          const idx = queue.indexOf(item);
+          if (idx >= 0) queue.splice(idx, 1);
+          if (queue.length === 0) pending.delete(name);
+          else pending.set(name, queue);
+          reject(new Error(`Timeout waiting for ${name}`));
+        }, timeoutMs);
+
+        const queue = pending.get(name) || [];
+        queue.push(item);
+        pending.set(name, queue);
+        ws.send(payload);
+      });
+    }
+
+    function setEqState(text) {
+      eqStateEl.textContent = text;
+    }
+
+    function deepCloneJson(value) {
+      return JSON.parse(JSON.stringify(value));
+    }
+
+    function toBandGain(value) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return 0;
+      return Math.max(-12, Math.min(12, n));
+    }
+
+    function bandControls(name) {
+      const range = eqGrid.querySelector(`input[data-band="${name}"][data-kind="range"]`);
+      const number = eqGrid.querySelector(`input[data-band="${name}"][data-kind="number"]`);
+      return { range, number };
+    }
+
+    function setBandControlValue(name, gain) {
+      const value = toBandGain(gain);
+      const { range, number } = bandControls(name);
+      if (range) range.value = value.toFixed(1);
+      if (number) number.value = value.toFixed(1);
+    }
+
+    function readBandControlValue(name) {
+      const { range } = bandControls(name);
+      return toBandGain(range ? range.value : 0);
+    }
+
+    function buildEqControls() {
+      eqGrid.innerHTML = "";
+      for (const band of eqBandDefs) {
+        const row = document.createElement("div");
+        row.className = "eq-row";
+
+        const label = document.createElement("code");
+        label.textContent = band.label;
+
+        const range = document.createElement("input");
+        range.type = "range";
+        range.min = "-12";
+        range.max = "12";
+        range.step = "0.5";
+        range.value = "0";
+        range.dataset.band = band.name;
+        range.dataset.kind = "range";
+
+        const number = document.createElement("input");
+        number.type = "number";
+        number.min = "-12";
+        number.max = "12";
+        number.step = "0.5";
+        number.value = "0";
+        number.dataset.band = band.name;
+        number.dataset.kind = "number";
+
+        range.addEventListener("input", () => {
+          number.value = range.value;
+          queueEqApply();
+        });
+        range.addEventListener("change", () => {
+          number.value = range.value;
+          applyEqFromControls();
+        });
+        number.addEventListener("change", () => {
+          const value = toBandGain(number.value);
+          number.value = value.toFixed(1);
+          range.value = value.toFixed(1);
+          applyEqFromControls();
+        });
+
+        row.appendChild(label);
+        row.appendChild(range);
+        row.appendChild(number);
+        eqGrid.appendChild(row);
+      }
+    }
+
+    function configGain(config, bandName) {
+      const value = config && config.filters && config.filters[bandName]
+        && config.filters[bandName].parameters
+        ? config.filters[bandName].parameters.gain
+        : 0;
+      return toBandGain(value);
+    }
+
+    function syncEqControlsFromConfig(config) {
+      for (const band of eqBandDefs) {
+        setBandControlValue(band.name, configGain(config, band.name));
+      }
+    }
+
+    async function fetchActiveConfigJson() {
+      const reply = await request("GetConfigJson", 5000);
+      const parsed = typeof reply.value === "string" ? JSON.parse(reply.value) : reply.value;
+      if (!parsed || typeof parsed !== "object") {
+        throw new Error("GetConfigJson returned invalid data");
+      }
+      activeConfigJson = parsed;
+      return activeConfigJson;
+    }
+
+    async function pullEqFromActiveConfig(logMessage = true) {
+      try {
+        const config = await fetchActiveConfigJson();
+        syncEqControlsFromConfig(config);
+        setEqState("Synced");
+        if (logMessage) log("EQ synced from active config");
+      } catch (err) {
+        setEqState("Error");
+        log(`EQ sync failed: ${err.message}`);
+      }
+    }
+
+    async function applyEqFromControls() {
+      if (eqApplyInFlight) {
+        eqApplyQueued = true;
+        return;
+      }
+
+      eqApplyInFlight = true;
+      try {
+        do {
+          eqApplyQueued = false;
+          const base = activeConfigJson ? deepCloneJson(activeConfigJson) : deepCloneJson(await fetchActiveConfigJson());
+
+          if (!base.filters) throw new Error("Active config has no filters section");
+          for (const band of eqBandDefs) {
+            const filter = base.filters[band.name];
+            if (!filter || !filter.parameters) {
+              throw new Error(`Missing filter definition: ${band.name}`);
+            }
+            filter.parameters.gain = readBandControlValue(band.name);
+          }
+
+          setEqState("Applying");
+          await request({ SetConfigJson: JSON.stringify(base) }, 7000);
+          activeConfigJson = base;
+          setEqState("Applied");
+        } while (eqApplyQueued);
+      } catch (err) {
+        setEqState("Error");
+        log(`EQ apply failed: ${err.message}`);
+      } finally {
+        eqApplyInFlight = false;
+      }
+    }
+
+    function queueEqApply() {
+      if (eqApplyTimer) clearTimeout(eqApplyTimer);
+      eqApplyTimer = setTimeout(() => {
+        applyEqFromControls();
+      }, 180);
+    }
+
+    function setAllEqBands(gain) {
+      for (const band of eqBandDefs) {
+        setBandControlValue(band.name, gain);
+      }
+    }
+
+    async function pollOnce() {
+      try {
+        const [state, stop, vol, mute, load, clips, levels] = await Promise.all([
+          request("GetState"),
+          request("GetStopReason"),
+          request("GetVolume"),
+          request("GetMute"),
+          request("GetProcessingLoad"),
+          request("GetClippedSamples"),
+          request("GetSignalLevelsSinceLast")
+        ]);
+
+        stateVal.textContent = state.value;
+        stopVal.textContent = stop.value;
+        volVal.textContent = `${Number(vol.value).toFixed(1)} dB`;
+        muteVal.textContent = mute.value ? "Muted" : "Unmuted";
+        loadVal.textContent = `${Number(load.value).toFixed(2)} %`;
+        clipVal.textContent = String(clips.value);
+
+        const rms = levels.value && levels.value.playback_rms && levels.value.playback_rms.length
+          ? Number(levels.value.playback_rms[0])
+          : -120;
+        const normalized = Math.max(0, Math.min(100, ((rms + 80) / 80) * 100));
+        rmsBar.style.width = `${normalized}%`;
+      } catch (err) {
+        log(`poll error: ${err.message}`);
+      }
+    }
+
+    function startPolling() {
+      stopPolling();
+      pollTimer = setInterval(pollOnce, 1000);
+      pollOnce();
+    }
+
+    function stopPolling() {
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = null;
+    }
+
+    function connect() {
+      const url = wsUrlEl.value.trim();
+      if (!url) return;
+      localStorage.setItem("camilla_ws_url", url);
+      if (ws && ws.readyState <= WebSocket.OPEN) ws.close();
+      ws = new WebSocket(url);
+
+      ws.addEventListener("open", async () => {
+        setConn(true);
+        log(`connected: ${url}`);
+        try {
+          await request({ SetUpdateInterval: 500 });
+        } catch (err) {
+          log(`SetUpdateInterval warning: ${err.message}`);
+        }
+        await pullEqFromActiveConfig(false);
+        startPolling();
+      });
+
+      ws.addEventListener("close", () => {
+        setConn(false);
+        stopPolling();
+        activeConfigJson = null;
+        setEqState("Disconnected");
+        log("connection closed");
+      });
+
+      ws.addEventListener("error", () => {
+        setConn(false);
+        log("connection error");
+      });
+
+      ws.addEventListener("message", (event) => {
+        let parsed;
+        try {
+          parsed = JSON.parse(event.data);
+        } catch (err) {
+          log(`parse error: ${err.message}`);
+          return;
+        }
+
+        const keys = Object.keys(parsed);
+        if (keys.length !== 1) return;
+        const key = keys[0];
+        const body = parsed[key];
+        const queue = pending.get(key) || [];
+        const item = queue.shift();
+        if (item) {
+          clearTimeout(item.timeout);
+          if (body.result === "Error") item.reject(new Error(body.value || "command failed"));
+          else item.resolve(body);
+        }
+        if (queue.length > 0) pending.set(key, queue);
+        else pending.delete(key);
+      });
+    }
+
+    function disconnect() {
+      if (ws) ws.close();
+    }
+
+    async function setVolume(value) {
+      const dB = Number(value);
+      volumeSlider.value = dB;
+      volumeNum.value = dB;
+      try {
+        await request({ SetVolume: dB });
+        const current = await request("GetVolume");
+        volVal.textContent = `${Number(current.value).toFixed(1)} dB`;
+      } catch (err) {
+        log(`SetVolume failed: ${err.message}`);
+      }
+    }
+
+    async function toggleMute() {
+      try {
+        const reply = await request("ToggleMute");
+        muteVal.textContent = reply.value ? "Muted" : "Unmuted";
+      } catch (err) {
+        log(`ToggleMute failed: ${err.message}`);
+      }
+    }
+
+    async function applyProfile() {
+      const profile = profileSelect.value;
+      try {
+        const text = await fetch(`../profiles/${profile}`).then((r) => {
+          if (!r.ok) throw new Error(`profile fetch failed: ${r.status}`);
+          return r.text();
+        });
+        await request({ SetConfig: text }, 5000);
+        activeConfigJson = null;
+        await pullEqFromActiveConfig(false);
+        log(`profile applied live: ${profile}`);
+      } catch (err) {
+        log(`profile apply failed: ${err.message}`);
+      }
+    }
+
+    document.getElementById("connectBtn").addEventListener("click", connect);
+    document.getElementById("disconnectBtn").addEventListener("click", disconnect);
+    document.getElementById("muteBtn").addEventListener("click", toggleMute);
+    document.getElementById("applyProfileBtn").addEventListener("click", applyProfile);
+    document.getElementById("eqPullBtn").addEventListener("click", () => pullEqFromActiveConfig(true));
+    document.getElementById("eqZeroBtn").addEventListener("click", async () => {
+      setAllEqBands(0);
+      await applyEqFromControls();
+      log("EQ set flat: all bands 0.0 dB");
+    });
+
+    document.getElementById("reloadBtn").addEventListener("click", async () => {
+      try {
+        await request("Reload");
+        activeConfigJson = null;
+        await pullEqFromActiveConfig(false);
+        log("reload requested");
+      } catch (err) {
+        log(`Reload failed: ${err.message}`);
+      }
+    });
+
+    document.getElementById("resetClipBtn").addEventListener("click", async () => {
+      try {
+        await request("ResetClippedSamples");
+        log("clipped samples counter reset");
+      } catch (err) {
+        log(`ResetClippedSamples failed: ${err.message}`);
+      }
+    });
+
+    volumeSlider.addEventListener("input", () => { volumeNum.value = volumeSlider.value; });
+    volumeSlider.addEventListener("change", () => setVolume(volumeSlider.value));
+    volumeNum.addEventListener("change", () => setVolume(volumeNum.value));
+    document.getElementById("volDown").addEventListener("click", () => setVolume(Number(volumeNum.value || 0) - 1));
+    document.getElementById("volUp").addEventListener("click", () => setVolume(Number(volumeNum.value || 0) + 1));
+
+    buildEqControls();
+    setAllEqBands(0);
+    setEqState("Idle");
+    wsUrlEl.value = wsUrlFromQueryOrStorage();
+    setConn(false);
+  </script>
+</body>
+</html>
