@@ -3,6 +3,7 @@
 ![Version](https://img.shields.io/badge/version-v0.1.0-blue)
 ![Platform](https://img.shields.io/badge/platform-macOS-lightgrey)
 ![License](https://img.shields.io/badge/license-MIT-green)
+![GitHub Release](https://img.shields.io/github/v/release/Lvlzer0o/wavedaemon)
 
 System-wide audio DSP daemon for macOS.
 
@@ -40,6 +41,10 @@ CamillaDSP
 Live DSP updates (volume, mute, profiles, 10-band EQ)
 ```
 
+## Demo
+
+![WaveDaemon Demo](docs/wavedaemon-demo.gif)
+
 ## Repository Layout
 
 ```text
@@ -62,6 +67,7 @@ wavedaemon/
 │   └── latency-test.sh
 ├── docs/
 │   ├── architecture.svg
+│   ├── wavedaemon-demo.gif
 │   └── routing.md
 ├── README.md
 ├── LICENSE
