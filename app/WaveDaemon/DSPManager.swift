@@ -1,5 +1,4 @@
 import Foundation
-import Darwin
 
 protocol DSPProcess: AnyObject {
     var executableURL: URL? { get set }
@@ -534,90 +533,50 @@ final class DSPManager {
         guard (1...65_535).contains(port) else {
             return false
         }
-        let normalizedHost = host == "localhost" ? "127.0.0.1" : host
-        let timeoutMs = max(1, Int32(timeout * 1000))
 
-        var ipv4 = sockaddr_in()
-        ipv4.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-        ipv4.sin_family = sa_family_t(AF_INET)
-        ipv4.sin_port = in_port_t(UInt16(port).bigEndian)
+        let lsofCandidates = ["/usr/sbin/lsof", "/usr/bin/lsof"]
+        guard let lsofPath = lsofCandidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
+            return false
+        }
 
-        if normalizedHost.withCString({ inet_pton(AF_INET, $0, &ipv4.sin_addr) }) == 1 {
-            return probeSocket(
-                family: AF_INET,
-                timeoutMs: timeoutMs
-            ) { fd in
-                withUnsafePointer(to: &ipv4) { pointer in
-                    pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { address in
-                        connect(fd, address, socklen_t(MemoryLayout<sockaddr_in>.size))
-                    }
-                }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: lsofPath)
+        process.arguments = ["-nP", "-iTCP:\(port)", "-sTCP:LISTEN"]
+
+        let outputPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = Pipe()
+
+        do {
+            try process.run()
+        } catch {
+            return false
+        }
+
+        let start = Date()
+        while process.isRunning {
+            if Date().timeIntervalSince(start) >= timeout {
+                process.terminate()
+                return false
             }
+            Thread.sleep(forTimeInterval: 0.01)
         }
 
-        var ipv6 = sockaddr_in6()
-        ipv6.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
-        ipv6.sin6_family = sa_family_t(AF_INET6)
-        ipv6.sin6_port = in_port_t(UInt16(port).bigEndian)
-
-        if normalizedHost.withCString({ inet_pton(AF_INET6, $0, &ipv6.sin6_addr) }) == 1 {
-            return probeSocket(
-                family: AF_INET6,
-                timeoutMs: timeoutMs
-            ) { fd in
-                withUnsafePointer(to: &ipv6) { pointer in
-                    pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { address in
-                        connect(fd, address, socklen_t(MemoryLayout<sockaddr_in6>.size))
-                    }
-                }
-            }
-        }
-
-        return false
-    }
-
-    nonisolated private static func probeSocket(
-        family: Int32,
-        timeoutMs: Int32,
-        connectCall: (Int32) -> Int32
-    ) -> Bool {
-        let fd = socket(family, SOCK_STREAM, 0)
-        guard fd >= 0 else {
-            return false
-        }
-        defer { close(fd) }
-
-        let flags = fcntl(fd, F_GETFL, 0)
-        if flags >= 0 {
-            _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
-        }
-
-        let connectResult = connectCall(fd)
-        if connectResult == 0 {
-            return true
-        }
-
-        if errno != EINPROGRESS {
+        process.waitUntilExit()
+        if process.terminationStatus != 0 {
             return false
         }
 
-        var pollDescriptor = pollfd(
-            fd: fd,
-            events: Int16(POLLOUT),
-            revents: 0
-        )
-        let pollResult = poll(&pollDescriptor, 1, timeoutMs)
-        guard pollResult > 0 else {
+        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+        guard let output = String(data: outputData, encoding: .utf8) else {
             return false
         }
 
-        var socketError: Int32 = 0
-        var optionLength = socklen_t(MemoryLayout<Int32>.size)
-        guard getsockopt(fd, SOL_SOCKET, SO_ERROR, &socketError, &optionLength) == 0 else {
-            return false
+        if host.isEmpty || host == "127.0.0.1" || host == "localhost" {
+            return !output.isEmpty
         }
 
-        return socketError == 0
+        return output.localizedCaseInsensitiveContains(host)
     }
 
     private static func directoryExists(_ url: URL, fileManager: FileManager) -> Bool {
