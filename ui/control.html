@@ -286,7 +286,7 @@
     const profileSelect = document.getElementById("profileSelect");
     const eqGrid = document.getElementById("eqGrid");
     const eqStateEl = document.getElementById("eqState");
-    const eqBandDefs = [
+    const defaultEqBandDefs = [
       { name: "eq_band_01", label: "31 Hz" },
       { name: "eq_band_02", label: "62 Hz" },
       { name: "eq_band_03", label: "125 Hz" },
@@ -301,8 +301,11 @@
 
     let ws = null;
     let pollTimer = null;
+    let pollInFlight = false;
+    let lastSlowPollAt = 0;
     const pending = new Map();
     let activeConfigJson = null;
+    let eqBandDefs = defaultEqBandDefs.map((band) => ({ ...band }));
     let eqApplyTimer = null;
     let eqApplyInFlight = false;
     let eqApplyQueued = false;
@@ -329,29 +332,70 @@
       return typeof command === "string" ? command : Object.keys(command)[0];
     }
 
-    function request(command, timeoutMs = 2500) {
+    function removePendingItem(name, item) {
+      const queue = pending.get(name);
+      if (!queue || queue.length === 0) return false;
+      const idx = queue.indexOf(item);
+      if (idx < 0) return false;
+      queue.splice(idx, 1);
+      if (queue.length > 0) pending.set(name, queue);
+      else pending.delete(name);
+      return true;
+    }
+
+    function request(command, timeoutMs = 2500, options = {}) {
       if (!ws || ws.readyState !== WebSocket.OPEN) {
         return Promise.reject(new Error("WebSocket not connected"));
       }
+      const singleFlight = Boolean(options.singleFlight);
       const name = commandName(command);
       const payload = JSON.stringify(command);
 
-      return new Promise((resolve, reject) => {
-        const item = { resolve, reject, timeout: null };
+      const existingQueue = pending.get(name) || [];
+      if (singleFlight && existingQueue.length > 0) {
+        return existingQueue[existingQueue.length - 1].promise;
+      }
+
+      const item = {
+        resolve: null,
+        reject: null,
+        timeout: null,
+        promise: null
+      };
+
+      item.promise = new Promise((resolve, reject) => {
+        item.resolve = resolve;
+        item.reject = reject;
         item.timeout = setTimeout(() => {
-          const queue = pending.get(name) || [];
-          const idx = queue.indexOf(item);
-          if (idx >= 0) queue.splice(idx, 1);
-          if (queue.length === 0) pending.delete(name);
-          else pending.set(name, queue);
+          removePendingItem(name, item);
           reject(new Error(`Timeout waiting for ${name}`));
         }, timeoutMs);
 
         const queue = pending.get(name) || [];
         queue.push(item);
         pending.set(name, queue);
-        ws.send(payload);
+
+        try {
+          ws.send(payload);
+        } catch (err) {
+          clearTimeout(item.timeout);
+          removePendingItem(name, item);
+          reject(err instanceof Error ? err : new Error(String(err)));
+        }
       });
+
+      return item.promise;
+    }
+
+    function rejectPendingRequests(reason) {
+      const message = reason || "WebSocket disconnected";
+      for (const queue of pending.values()) {
+        for (const item of queue) {
+          clearTimeout(item.timeout);
+          item.reject(new Error(message));
+        }
+      }
+      pending.clear();
     }
 
     function setEqState(text) {
@@ -366,6 +410,74 @@
       const n = Number(value);
       if (!Number.isFinite(n)) return 0;
       return Math.max(-12, Math.min(12, n));
+    }
+
+    function formatEqBandLabel(name, filterDef) {
+      const freq = Number(filterDef && filterDef.parameters ? filterDef.parameters.freq : NaN);
+      if (Number.isFinite(freq) && freq > 0) {
+        if (freq >= 1000) {
+          const asKHz = (freq / 1000).toFixed(1).replace(/\.0$/, "");
+          return `${asKHz} kHz`;
+        }
+        return `${Math.round(freq)} Hz`;
+      }
+      return name;
+    }
+
+    function isAdjustableEqFilter(name, filterDef) {
+      if (!filterDef || typeof filterDef !== "object") return false;
+      const params = filterDef.parameters;
+      if (!params || typeof params !== "object") return false;
+      if (!Object.prototype.hasOwnProperty.call(params, "gain")) return false;
+
+      const type = String(filterDef.type || "").toLowerCase();
+      const paramType = String(params.type || "").toLowerCase();
+      if (type === "biquad") return true;
+      if (paramType.includes("peak") || paramType.includes("shelf")) return true;
+      return name.toLowerCase().startsWith("eq_");
+    }
+
+    function deriveEqBandDefsFromConfig(config) {
+      const filters = config && typeof config === "object" && config.filters && typeof config.filters === "object"
+        ? config.filters
+        : {};
+      const names = [];
+      const seen = new Set();
+
+      if (Array.isArray(config && config.pipeline)) {
+        for (const stage of config.pipeline) {
+          if (!stage || stage.type !== "Filter" || !Array.isArray(stage.names)) continue;
+          for (const name of stage.names) {
+            if (typeof name !== "string" || seen.has(name)) continue;
+            const filterDef = filters[name];
+            if (!isAdjustableEqFilter(name, filterDef)) continue;
+            names.push(name);
+            seen.add(name);
+          }
+        }
+      }
+
+      if (names.length === 0) {
+        for (const [name, filterDef] of Object.entries(filters)) {
+          if (seen.has(name)) continue;
+          if (!isAdjustableEqFilter(name, filterDef)) continue;
+          names.push(name);
+          seen.add(name);
+        }
+      }
+
+      return names.map((name) => ({
+        name,
+        label: formatEqBandLabel(name, filters[name])
+      }));
+    }
+
+    function eqBandLayoutChanged(nextDefs) {
+      if (nextDefs.length !== eqBandDefs.length) return true;
+      for (let i = 0; i < nextDefs.length; i += 1) {
+        if (nextDefs[i].name !== eqBandDefs[i].name || nextDefs[i].label !== eqBandDefs[i].label) return true;
+      }
+      return false;
     }
 
     function bandControls(name) {
@@ -388,6 +500,14 @@
 
     function buildEqControls() {
       eqGrid.innerHTML = "";
+      if (eqBandDefs.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "k";
+        empty.textContent = "No adjustable EQ bands found in active config.";
+        eqGrid.appendChild(empty);
+        return;
+      }
+
       for (const band of eqBandDefs) {
         const row = document.createElement("div");
         row.className = "eq-row";
@@ -444,9 +564,22 @@
     }
 
     function syncEqControlsFromConfig(config) {
+      const derived = deriveEqBandDefsFromConfig(config);
+      if (derived.length === 0) {
+        eqBandDefs = [];
+        buildEqControls();
+        return false;
+      }
+
+      if (eqBandLayoutChanged(derived)) {
+        eqBandDefs = derived;
+        buildEqControls();
+      }
+
       for (const band of eqBandDefs) {
         setBandControlValue(band.name, configGain(config, band.name));
       }
+      return true;
     }
 
     async function fetchActiveConfigJson() {
@@ -462,9 +595,15 @@
     async function pullEqFromActiveConfig(logMessage = true) {
       try {
         const config = await fetchActiveConfigJson();
-        syncEqControlsFromConfig(config);
+        const hasEq = syncEqControlsFromConfig(config);
+        if (!hasEq) {
+          setEqState("Unavailable");
+          if (logMessage) log("EQ unavailable: active config has no adjustable EQ bands");
+          return;
+        }
+
         setEqState("Synced");
-        if (logMessage) log("EQ synced from active config");
+        if (logMessage) log(`EQ synced from active config (${eqBandDefs.length} band${eqBandDefs.length === 1 ? "" : "s"})`);
       } catch (err) {
         setEqState("Error");
         log(`EQ sync failed: ${err.message}`);
@@ -474,6 +613,11 @@
     async function applyEqFromControls() {
       if (eqApplyInFlight) {
         eqApplyQueued = true;
+        return;
+      }
+      if (eqBandDefs.length === 0) {
+        setEqState("Unavailable");
+        log("EQ apply skipped: no adjustable EQ bands in active config");
         return;
       }
 
@@ -486,7 +630,7 @@
           if (!base.filters) throw new Error("Active config has no filters section");
           for (const band of eqBandDefs) {
             const filter = base.filters[band.name];
-            if (!filter || !filter.parameters) {
+            if (!filter || !filter.parameters || !Object.prototype.hasOwnProperty.call(filter.parameters, "gain")) {
               throw new Error(`Missing filter definition: ${band.name}`);
             }
             filter.parameters.gain = readBandControlValue(band.name);
@@ -513,37 +657,92 @@
     }
 
     function setAllEqBands(gain) {
+      if (eqBandDefs.length === 0) return;
       for (const band of eqBandDefs) {
         setBandControlValue(band.name, gain);
       }
     }
 
     async function pollOnce() {
+      if (pollInFlight) return;
+      pollInFlight = true;
       try {
-        const [state, stop, vol, mute, load, clips, levels] = await Promise.all([
-          request("GetState"),
-          request("GetStopReason"),
-          request("GetVolume"),
-          request("GetMute"),
-          request("GetProcessingLoad"),
-          request("GetClippedSamples"),
-          request("GetSignalLevelsSinceLast")
-        ]);
+        const now = Date.now();
+        const runSlowPoll = now - lastSlowPollAt >= 5000;
+        if (runSlowPoll) lastSlowPollAt = now;
 
-        stateVal.textContent = state.value;
-        stopVal.textContent = stop.value;
-        volVal.textContent = `${Number(vol.value).toFixed(1)} dB`;
-        muteVal.textContent = mute.value ? "Muted" : "Unmuted";
-        loadVal.textContent = `${Number(load.value).toFixed(2)} %`;
-        clipVal.textContent = String(clips.value);
+        const pollTasks = [
+          {
+            name: "GetState",
+            promise: request("GetState", 2500, { singleFlight: true }),
+            apply: (reply) => { stateVal.textContent = reply.value; }
+          },
+          {
+            name: "GetVolume",
+            promise: request("GetVolume", 2500, { singleFlight: true }),
+            apply: (reply) => { volVal.textContent = `${Number(reply.value).toFixed(1)} dB`; }
+          },
+          {
+            name: "GetSignalLevelsSinceLast",
+            promise: request("GetSignalLevelsSinceLast", 2500, { singleFlight: true }),
+            apply: (reply) => {
+              const rms = reply.value && reply.value.playback_rms && reply.value.playback_rms.length
+                ? Number(reply.value.playback_rms[0])
+                : -120;
+              const normalized = Math.max(0, Math.min(100, ((rms + 80) / 80) * 100));
+              rmsBar.style.width = `${normalized}%`;
+            }
+          }
+        ];
 
-        const rms = levels.value && levels.value.playback_rms && levels.value.playback_rms.length
-          ? Number(levels.value.playback_rms[0])
-          : -120;
-        const normalized = Math.max(0, Math.min(100, ((rms + 80) / 80) * 100));
-        rmsBar.style.width = `${normalized}%`;
-      } catch (err) {
-        log(`poll error: ${err.message}`);
+        if (runSlowPoll) {
+          pollTasks.push(
+            {
+              name: "GetStopReason",
+              promise: request("GetStopReason", 2500, { singleFlight: true }),
+              apply: (reply) => { stopVal.textContent = reply.value; }
+            },
+            {
+              name: "GetMute",
+              promise: request("GetMute", 2500, { singleFlight: true }),
+              apply: (reply) => { muteVal.textContent = reply.value ? "Muted" : "Unmuted"; }
+            },
+            {
+              name: "GetProcessingLoad",
+              promise: request("GetProcessingLoad", 2500, { singleFlight: true }),
+              apply: (reply) => { loadVal.textContent = `${Number(reply.value).toFixed(2)} %`; }
+            },
+            {
+              name: "GetClippedSamples",
+              promise: request("GetClippedSamples", 2500, { singleFlight: true }),
+              apply: (reply) => { clipVal.textContent = String(reply.value); }
+            }
+          );
+        }
+
+        const settled = await Promise.allSettled(pollTasks.map((task) => task.promise));
+        const errors = [];
+
+        settled.forEach((result, idx) => {
+          const task = pollTasks[idx];
+          if (result.status === "fulfilled") {
+            try {
+              task.apply(result.value);
+            } catch (err) {
+              errors.push(`${task.name}: ${err.message}`);
+            }
+            return;
+          }
+          const message = result.reason && result.reason.message ? result.reason.message : String(result.reason);
+          errors.push(`${task.name}: ${message}`);
+        });
+
+        if (errors.length > 0) {
+          const suffix = errors.length > 1 ? ` (+${errors.length - 1} more)` : "";
+          log(`poll partial error: ${errors[0]}${suffix}`);
+        }
+      } finally {
+        pollInFlight = false;
       }
     }
 
@@ -556,6 +755,8 @@
     function stopPolling() {
       if (pollTimer) clearInterval(pollTimer);
       pollTimer = null;
+      pollInFlight = false;
+      lastSlowPollAt = 0;
     }
 
     function connect() {
@@ -577,15 +778,18 @@
         startPolling();
       });
 
-      ws.addEventListener("close", () => {
+      ws.addEventListener("close", (event) => {
         setConn(false);
         stopPolling();
         activeConfigJson = null;
         setEqState("Disconnected");
+        const closeReason = event && event.reason ? `WebSocket closed: ${event.reason}` : "WebSocket closed";
+        rejectPendingRequests(closeReason);
         log("connection closed");
       });
 
       ws.addEventListener("error", () => {
+        rejectPendingRequests("WebSocket error");
         setConn(false);
         log("connection error");
       });
@@ -603,11 +807,17 @@
         if (keys.length !== 1) return;
         const key = keys[0];
         const body = parsed[key];
-        const queue = pending.get(key) || [];
+        const queue = pending.get(key);
+        if (!queue || queue.length === 0) return;
+        if (!body || typeof body !== "object") return;
+        const hasResult = Object.prototype.hasOwnProperty.call(body, "result");
+        const hasValue = Object.prototype.hasOwnProperty.call(body, "value");
+        if (!hasResult && !hasValue) return;
+
         const item = queue.shift();
         if (item) {
           clearTimeout(item.timeout);
-          if (body.result === "Error") item.reject(new Error(body.value || "command failed"));
+          if (hasResult && body.result === "Error") item.reject(new Error(body.value || "command failed"));
           else item.resolve(body);
         }
         if (queue.length > 0) pending.set(key, queue);
@@ -641,13 +851,34 @@
       }
     }
 
+    async function fetchProfileText(profileName) {
+      if (typeof profileName !== "string" || profileName.length === 0) {
+        throw new Error("invalid profile name");
+      }
+      if (profileName.includes("..") || profileName.includes("/")) {
+        throw new Error("unsafe profile name");
+      }
+
+      const encoded = encodeURIComponent(profileName);
+      const candidates = [
+        `../dsp/profiles/${encoded}`,
+        `../profiles/${encoded}`
+      ];
+
+      let lastError = "";
+      for (const url of candidates) {
+        const response = await fetch(url);
+        if (response.ok) return response.text();
+        lastError = `${response.status} at ${url}`;
+      }
+
+      throw new Error(`profile fetch failed (${lastError || "not found"})`);
+    }
+
     async function applyProfile() {
       const profile = profileSelect.value;
       try {
-        const text = await fetch(`../profiles/${profile}`).then((r) => {
-          if (!r.ok) throw new Error(`profile fetch failed: ${r.status}`);
-          return r.text();
-        });
+        const text = await fetchProfileText(profile);
         await request({ SetConfig: text }, 5000);
         activeConfigJson = null;
         await pullEqFromActiveConfig(false);
@@ -663,6 +894,10 @@
     document.getElementById("applyProfileBtn").addEventListener("click", applyProfile);
     document.getElementById("eqPullBtn").addEventListener("click", () => pullEqFromActiveConfig(true));
     document.getElementById("eqZeroBtn").addEventListener("click", async () => {
+      if (eqBandDefs.length === 0) {
+        log("EQ set flat skipped: no adjustable EQ bands in active config");
+        return;
+      }
       setAllEqBands(0);
       await applyEqFromControls();
       log("EQ set flat: all bands 0.0 dB");

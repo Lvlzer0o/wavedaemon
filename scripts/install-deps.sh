@@ -12,4 +12,7 @@ brew install camilladsp switchaudio-osx websocat jq
 brew install --cask blackhole-2ch
 
 echo "Done."
-echo "Next: configure Audio MIDI Setup, then run ./scripts/start-audio-dsp-failsafe.sh"
+echo "Next:"
+echo "  1) configure Audio MIDI Setup"
+echo "  2) run ./scripts/wavedaemon-doctor.sh"
+echo "  3) run ./scripts/start-audio-dsp-failsafe.sh"

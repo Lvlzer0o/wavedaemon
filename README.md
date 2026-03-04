@@ -57,6 +57,7 @@ wavedaemon/
 │   ├── stop-audio-dsp.sh
 │   ├── start-audio-dsp-failsafe.sh
 │   ├── stop-audio-dsp-failsafe.sh
+│   ├── wavedaemon-doctor.sh
 │   ├── install-deps.sh
 │   ├── start-audio-control-ui.sh
 │   ├── stop-audio-control-ui.sh
@@ -125,7 +126,27 @@ Optional overrides:
 
 - `CAMILLADSP_MULTI_OUTPUT_NAME`
 - `CAMILLADSP_MULTI_OUTPUT_FALLBACK`
+- `CAMILLADSP_SAFE_OUTPUT_FALLBACK` (default: `Built-in Output`)
+- `CAMILLADSP_ALLOW_RAW_OUTPUT_FALLBACK` (`1` to allow auto-fallback to `CAMILLADSP_RAW_OUTPUT_FALLBACK`)
+- `CAMILLADSP_RAW_OUTPUT_FALLBACK` (default: `BlackHole 2ch`)
 - `CAMILLADSP_STOP_OUTPUT_DEVICE`
+
+## Doctor
+
+Run health checks before or after setup:
+
+```bash
+./scripts/wavedaemon-doctor.sh
+```
+
+Checks include:
+
+- dependencies (`camilladsp`, `SwitchAudioSource`, `websocat`, `jq`, `python3`)
+- required audio devices (`BlackHole 2ch`, aggregate, multi-output/fallback)
+- sample rates (target default: `48000 Hz`)
+- port availability (`1234`, `9137`)
+- config validation (`camilladsp --check`)
+- runtime status (CamillaDSP, keepalive, UI server)
 
 ## Validate
 
