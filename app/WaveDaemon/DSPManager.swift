@@ -362,7 +362,11 @@ final class DSPManager {
         let candidates = [
             env["WAVE_DAEMON_PROCESSING_OUTPUT_DEVICE"],
             env["CAMILLADSP_PROCESSING_OUTPUT_DEVICE"],
+            env["CAMILLADSP_MULTI_OUTPUT_NAME"],
+            env["CAMILLADSP_MULTI_OUTPUT_FALLBACK"],
             env["CAMILLADSP_RAW_OUTPUT_FALLBACK"],
+            "System DSP Output",
+            "Multi-Output Device",
             "BlackHole 2ch",
         ]
 
@@ -374,7 +378,7 @@ final class DSPManager {
             }
         }
 
-        return "BlackHole 2ch"
+        return "System DSP Output"
     }
 
     private static func defaultSwitchAudioSourcePath(fileManager: FileManager = .default) -> String? {
