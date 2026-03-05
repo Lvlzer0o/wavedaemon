@@ -60,13 +60,13 @@ final class DSPManager {
     private let runtimeDirectoryURL: URL
     private let logFileURL: URL
     private let stateFileURL: URL
-    private let wsAddress: String
-    private let wsPort: Int
+    private var wsAddress: String
+    private var wsPort: Int
     private let logLevel: String
     private let startupTimeout: TimeInterval
     private let validatePaths: Bool
-    private let autoRouteSystemOutput: Bool
-    private let processingOutputDevice: String
+    private var autoRouteSystemOutput: Bool
+    private var processingOutputDevice: String
     private let switchAudioSourcePath: String?
 
     private(set) var process: DSPProcess?
@@ -114,6 +114,28 @@ final class DSPManager {
 
     var isDSPRunning: Bool {
         process?.isRunning == true
+    }
+
+    var configurationFilePath: String {
+        configURL.path
+    }
+
+    var runtimeDirectoryPath: String {
+        runtimeDirectoryURL.path
+    }
+
+    var logFilePath: String {
+        logFileURL.path
+    }
+
+    func applyPreferences(_ preferences: WaveDaemonPreferencesSnapshot = WaveDaemonPreferences.load()) {
+        if let endpoint = WaveDaemonPreferences.parseWebSocketEndpoint(from: preferences.preferredWebSocketURL) {
+            wsAddress = endpoint.host
+            wsPort = endpoint.port
+        }
+
+        autoRouteSystemOutput = preferences.autoRouteSystemOutput
+        processingOutputDevice = preferences.processingOutputDevice
     }
 
     func isWebSocketReachable(timeout: TimeInterval = 0.2) -> Bool {
@@ -351,34 +373,11 @@ final class DSPManager {
     }
 
     private static func defaultAutoRouteSystemOutput() -> Bool {
-        let rawValue = ProcessInfo.processInfo.environment["WAVE_DAEMON_AUTO_ROUTE_OUTPUT"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        return rawValue != "0" && rawValue != "false" && rawValue != "no"
+        WaveDaemonPreferences.currentAutoRouteSystemOutput()
     }
 
     private static func defaultProcessingOutputDevice() -> String {
-        let env = ProcessInfo.processInfo.environment
-        let candidates = [
-            env["WAVE_DAEMON_PROCESSING_OUTPUT_DEVICE"],
-            env["CAMILLADSP_PROCESSING_OUTPUT_DEVICE"],
-            env["CAMILLADSP_MULTI_OUTPUT_NAME"],
-            env["CAMILLADSP_MULTI_OUTPUT_FALLBACK"],
-            env["CAMILLADSP_RAW_OUTPUT_FALLBACK"],
-            "System DSP Output",
-            "Multi-Output Device",
-            "BlackHole 2ch",
-        ]
-
-        for candidate in candidates {
-            guard let candidate else { continue }
-            let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                return trimmed
-            }
-        }
-
-        return "System DSP Output"
+        WaveDaemonPreferences.currentProcessingOutputDevice()
     }
 
     private static func defaultSwitchAudioSourcePath(fileManager: FileManager = .default) -> String? {
@@ -513,24 +512,17 @@ final class DSPManager {
     }
 
     static func defaultWebSocketURLString() -> String {
-        "ws://\(defaultWebSocketAddress()):\(defaultWebSocketPort())"
+        WaveDaemonPreferences.currentWebSocketURL()
     }
 
     private static func defaultWebSocketAddress() -> String {
-        let value = ProcessInfo.processInfo.environment["CAMILLADSP_WS_ADDRESS"]?.trimmingCharacters(
-            in: .whitespacesAndNewlines
-        )
-        return (value?.isEmpty == false ? value! : "127.0.0.1")
+        WaveDaemonPreferences.parseWebSocketEndpoint(from: WaveDaemonPreferences.currentWebSocketURL())?.host
+            ?? "127.0.0.1"
     }
 
     private static func defaultWebSocketPort() -> Int {
-        guard let rawValue = ProcessInfo.processInfo.environment["CAMILLADSP_WS_PORT"],
-              let value = Int(rawValue),
-              (1...65_535).contains(value)
-        else {
-            return 1234
-        }
-        return value
+        WaveDaemonPreferences.parseWebSocketEndpoint(from: WaveDaemonPreferences.currentWebSocketURL())?.port
+            ?? 1234
     }
 
     nonisolated private static func defaultPortProbe(host: String, port: Int, timeout: TimeInterval) -> Bool {

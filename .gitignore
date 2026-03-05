@@ -10,6 +10,8 @@
 *.pid
 *.state
 .runtime/
+ownership-map-out/
+ownership-map-config/
 
 # Xcode user state
 xcuserdata/

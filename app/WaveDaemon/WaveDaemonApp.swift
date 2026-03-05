@@ -10,6 +10,10 @@ struct WaveDaemonApp: App {
         }
         .defaultSize(width: 1180, height: 860)
         .windowStyle(.hiddenTitleBar)
+
+        Settings {
+            SettingsView()
+        }
     }
 }
 

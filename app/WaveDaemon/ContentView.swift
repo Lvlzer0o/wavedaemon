@@ -34,7 +34,15 @@ struct ContentView: View {
     private let dspManager = DSPManager.shared
     private let reverbMixRenderer = ReverbMixRenderer()
 
-    @State private var websocketURL = DSPManager.defaultWebSocketURLString()
+    @AppStorage(WaveDaemonPreferences.Keys.preferredWebSocketURL)
+    private var websocketURL = WaveDaemonPreferences.defaultWebSocketURLString()
+    @AppStorage(WaveDaemonPreferences.Keys.autoRouteSystemOutput)
+    private var autoRouteSystemOutput = WaveDaemonPreferences.defaultAutoRouteSystemOutput()
+    @AppStorage(WaveDaemonPreferences.Keys.processingOutputDevice)
+    private var processingOutputDevice = WaveDaemonPreferences.defaultProcessingOutputDevice()
+    @AppStorage(WaveDaemonPreferences.Keys.autoConnectOnLaunch)
+    private var autoConnectOnLaunch = false
+
     @State private var profiles: [AudioProfile] = []
     @State private var selectedProfileName = ""
     @State private var reverbStyle: ReverbStyle = .vocalPlate
@@ -48,6 +56,7 @@ struct ContentView: View {
     @State private var isStartingDSP = false
     @State private var isConnecting = false
     @State private var lastReportedExitStatus: Int32?
+    @State private var didAttemptAutoConnect = false
 
     private let brandCyan = Color(red: 0.23, green: 0.73, blue: 0.94)
     private let brandAmber = Color(red: 0.98, green: 0.72, blue: 0.28)
@@ -132,8 +141,10 @@ struct ContentView: View {
         }
         .frame(minWidth: 900, minHeight: 780)
         .task {
+            syncRuntimePreferences()
             refreshDSPRunningState()
             loadProfiles()
+            attemptAutoConnectIfNeeded()
         }
         .onReceive(Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()) { _ in
             let wasRunning = isDSPRunning
@@ -147,6 +158,15 @@ struct ContentView: View {
                 }
                 statusMessage = "CamillaDSP exited unexpectedly (\(exitStatus))"
             }
+        }
+        .onChange(of: websocketURL) { _ in
+            syncRuntimePreferences()
+        }
+        .onChange(of: autoRouteSystemOutput) { _ in
+            syncRuntimePreferences()
+        }
+        .onChange(of: processingOutputDevice) { _ in
+            syncRuntimePreferences()
         }
         .animation(.spring(response: 0.42, dampingFraction: 0.86), value: isDSPRunning)
         .animation(.spring(response: 0.42, dampingFraction: 0.86), value: camilla.isConnected)
@@ -989,6 +1009,20 @@ struct ContentView: View {
 
     private func refreshDSPRunningState() {
         isDSPRunning = dspManager.isDSPRunning || dspManager.isWebSocketReachable(timeout: 0.05)
+    }
+
+    private func syncRuntimePreferences() {
+        dspManager.applyPreferences()
+        refreshDSPRunningState()
+    }
+
+    private func attemptAutoConnectIfNeeded() {
+        guard autoConnectOnLaunch, !didAttemptAutoConnect else {
+            return
+        }
+
+        didAttemptAutoConnect = true
+        connect()
     }
 }
 
