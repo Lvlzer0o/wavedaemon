@@ -26,6 +26,15 @@ find_running_pid() {
   return 1
 }
 
+is_pid_listening_on_ws_port() {
+  local pid="$1"
+  local listening_pids
+
+  listening_pids="$(lsof -nP -tiTCP:"$WS_PORT" -sTCP:LISTEN 2>/dev/null || true)"
+  [[ -z "${listening_pids:-}" ]] && return 1
+  printf '%s\n' "$listening_pids" | grep -Fx "$pid" >/dev/null 2>&1
+}
+
 if [[ -z "$CAMILLADSP_BIN" ]]; then
   if command -v camilladsp >/dev/null 2>&1; then
     CAMILLADSP_BIN="$(command -v camilladsp)"
@@ -48,7 +57,7 @@ mkdir -p "$RUNTIME_DIR" "$(dirname "$PIDFILE")"
 
 if [[ -f "$PIDFILE" ]]; then
   pid="$(cat "$PIDFILE" 2>/dev/null || true)"
-  if [[ -n "${pid:-}" ]] && kill -0 "$pid" 2>/dev/null; then
+  if [[ -n "${pid:-}" ]] && kill -0 "$pid" 2>/dev/null && is_pid_listening_on_ws_port "$pid"; then
     echo "CamillaDSP already running (PID $pid)."
     exit 0
   fi
@@ -56,9 +65,11 @@ if [[ -f "$PIDFILE" ]]; then
 fi
 
 if pid="$(find_running_pid)"; then
-  echo "$pid" > "$PIDFILE"
-  echo "CamillaDSP already running (PID $pid)."
-  exit 0
+  if is_pid_listening_on_ws_port "$pid"; then
+    echo "$pid" > "$PIDFILE"
+    echo "CamillaDSP already running (PID $pid)."
+    exit 0
+  fi
 fi
 
 if ! "$CAMILLADSP_BIN" --check "$CONFIG" >/dev/null 2>&1; then
@@ -67,22 +78,20 @@ if ! "$CAMILLADSP_BIN" --check "$CONFIG" >/dev/null 2>&1; then
   exit 1
 fi
 
-(
-  cd "$REPO_ROOT"
-  nohup "$CAMILLADSP_BIN" \
-    --loglevel info \
-    --logfile "$LOGFILE" \
-    --address "$WS_ADDRESS" \
-    --port "$WS_PORT" \
-    --statefile "$STATEFILE" \
-    "$CONFIG" >/dev/null 2>&1
-) &
+cd "$REPO_ROOT"
+nohup "$CAMILLADSP_BIN" \
+  --loglevel info \
+  --logfile "$LOGFILE" \
+  --address "$WS_ADDRESS" \
+  --port "$WS_PORT" \
+  --statefile "$STATEFILE" \
+  "$CONFIG" >/dev/null 2>&1 &
 
 pid=$!
 echo "$pid" > "$PIDFILE"
 
 for _ in $(seq 1 50); do
-  if lsof -nP -iTCP:"$WS_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+  if is_pid_listening_on_ws_port "$pid"; then
     echo "CamillaDSP started (PID $pid)."
     echo "Config: $CONFIG"
     echo "Log: $LOGFILE"
@@ -99,6 +108,20 @@ for _ in $(seq 1 50); do
 
   sleep 0.1
 done
+
+if kill -0 "$pid" 2>/dev/null; then
+  kill "$pid" 2>/dev/null || true
+  for _ in $(seq 1 10); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      break
+    fi
+    sleep 0.1
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -9 "$pid" 2>/dev/null || true
+  fi
+fi
+rm -f "$PIDFILE"
 
 echo "CamillaDSP is running but WebSocket never opened on ws://$WS_ADDRESS:$WS_PORT."
 echo "Tail of log:"

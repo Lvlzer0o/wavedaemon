@@ -304,6 +304,9 @@
     let pollInFlight = false;
     let lastSlowPollAt = 0;
     const pending = new Map();
+    // CamillaDSP responses are keyed by command name only (no request IDs), so serialize
+    // same-command sends to keep request/response pairing deterministic.
+    const commandSerializers = new Map();
     let activeConfigJson = null;
     let eqBandDefs = defaultEqBandDefs.map((band) => ({ ...band }));
     let eqApplyTimer = null;
@@ -370,41 +373,53 @@
       const singleFlight = Boolean(options.singleFlight);
       const name = commandName(command);
       const payload = JSON.stringify(command);
+      const previous = commandSerializers.get(name) || Promise.resolve();
 
-      const existingQueue = pending.get(name) || [];
-      if (singleFlight && existingQueue.length > 0) {
-        return existingQueue[existingQueue.length - 1].promise;
-      }
+      const current = previous.catch(() => {}).then(() => {
+        const existingQueue = pending.get(name) || [];
+        if (singleFlight && existingQueue.length > 0) {
+          return existingQueue[existingQueue.length - 1].promise;
+        }
 
-      const item = {
-        resolve: null,
-        reject: null,
-        timeout: null,
-        promise: null
-      };
+        const item = {
+          resolve: null,
+          reject: null,
+          timeout: null,
+          promise: null
+        };
 
-      item.promise = new Promise((resolve, reject) => {
-        item.resolve = resolve;
-        item.reject = reject;
-        item.timeout = setTimeout(() => {
-          removePendingItem(name, item);
-          reject(new Error(`Timeout waiting for ${name}`));
-        }, timeoutMs);
+        item.promise = new Promise((resolve, reject) => {
+          item.resolve = resolve;
+          item.reject = reject;
+          item.timeout = setTimeout(() => {
+            removePendingItem(name, item);
+            reject(new Error(`Timeout waiting for ${name}`));
+          }, timeoutMs);
 
-        const queue = pending.get(name) || [];
-        queue.push(item);
-        pending.set(name, queue);
+          const queue = pending.get(name) || [];
+          queue.push(item);
+          pending.set(name, queue);
 
-        try {
-          ws.send(payload);
-        } catch (err) {
-          clearTimeout(item.timeout);
-          removePendingItem(name, item);
-          reject(err instanceof Error ? err : new Error(String(err)));
+          try {
+            ws.send(payload);
+          } catch (err) {
+            clearTimeout(item.timeout);
+            removePendingItem(name, item);
+            reject(err instanceof Error ? err : new Error(String(err)));
+          }
+        });
+
+        return item.promise;
+      });
+
+      commandSerializers.set(name, current);
+      current.finally(() => {
+        if (commandSerializers.get(name) === current) {
+          commandSerializers.delete(name);
         }
       });
 
-      return item.promise;
+      return current;
     }
 
     function rejectPendingRequests(reason) {

@@ -131,6 +131,12 @@ Optional overrides:
 - `CAMILLADSP_RAW_OUTPUT_FALLBACK` (default: `BlackHole 2ch`)
 - `CAMILLADSP_STOP_OUTPUT_DEVICE`
 
+WebSocket bind/connect split (migration-safe defaults):
+
+- **Daemon bind** (where locally spawned CamillaDSP listens): `CAMILLADSP_BIND_ADDRESS`, `CAMILLADSP_BIND_PORT`
+- **Client connect URL** (what UI/app connects to): `CAMILLADSP_CLIENT_WS_URL`
+- Backward compatibility: if bind vars are not set, daemon bind falls back to `CAMILLADSP_WS_ADDRESS` / `CAMILLADSP_WS_PORT`; existing saved `preferredWebSocketURL` values continue to control client connection only.
+
 ## Doctor
 
 Run health checks before or after setup:

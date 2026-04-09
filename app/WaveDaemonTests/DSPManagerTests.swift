@@ -2,6 +2,37 @@ import XCTest
 @testable import WaveDaemon
 
 final class DSPManagerTests: XCTestCase {
+    func testWildcardBindAddressesProbeLoopback() throws {
+        let wildcardCases = ["0.0.0.0", "::", "*"]
+
+        for wildcard in wildcardCases {
+            let mockProcess = MockDSPProcess()
+            var probedHosts: [String] = []
+            var probedPorts: [Int] = []
+            let manager = DSPManager(
+                processFactory: { mockProcess },
+                portProbe: { host, port, _ in
+                    probedHosts.append(host)
+                    probedPorts.append(port)
+                    return true
+                },
+                executableURL: URL(fileURLWithPath: "/usr/bin/env"),
+                configURL: URL(fileURLWithPath: "/tmp/config.yml"),
+                runtimeDirectoryURL: URL(fileURLWithPath: "/tmp"),
+                daemonBindAddress: wildcard,
+                daemonBindPort: 4321,
+                validatePaths: false,
+                autoRouteSystemOutput: false
+            )
+
+            let didStart = try manager.startDSP()
+            XCTAssertTrue(didStart, "Expected startup to succeed for wildcard \(wildcard)")
+            XCTAssertTrue(probedHosts.allSatisfy { $0 == "127.0.0.1" })
+            XCTAssertTrue(probedPorts.allSatisfy { $0 == 4321 })
+            _ = manager.stopDSP()
+        }
+    }
+
     func testStartDSPStartsProcess() throws {
         let mockProcess = MockDSPProcess()
         let manager = DSPManager(
@@ -12,6 +43,8 @@ final class DSPManagerTests: XCTestCase {
             runtimeDirectoryURL: URL(fileURLWithPath: "/tmp"),
             logFileURL: URL(fileURLWithPath: "/tmp/camilladsp.log"),
             stateFileURL: URL(fileURLWithPath: "/tmp/state.json"),
+            daemonBindAddress: "127.0.0.1",
+            daemonBindPort: 1234,
             validatePaths: false,
             autoRouteSystemOutput: false
         )
@@ -43,6 +76,8 @@ final class DSPManagerTests: XCTestCase {
             executableURL: URL(fileURLWithPath: "/usr/bin/env"),
             configURL: URL(fileURLWithPath: "/tmp/config.yml"),
             runtimeDirectoryURL: URL(fileURLWithPath: "/tmp"),
+            daemonBindAddress: "127.0.0.1",
+            daemonBindPort: 1234,
             validatePaths: false,
             autoRouteSystemOutput: false
         )
@@ -63,6 +98,8 @@ final class DSPManagerTests: XCTestCase {
             executableURL: URL(fileURLWithPath: "/usr/bin/env"),
             configURL: URL(fileURLWithPath: "/tmp/config.yml"),
             runtimeDirectoryURL: URL(fileURLWithPath: "/tmp"),
+            daemonBindAddress: "127.0.0.1",
+            daemonBindPort: 1234,
             validatePaths: false,
             autoRouteSystemOutput: false
         )
@@ -84,6 +121,8 @@ final class DSPManagerTests: XCTestCase {
             executableURL: URL(fileURLWithPath: "/usr/bin/env"),
             configURL: URL(fileURLWithPath: "/tmp/config.yml"),
             runtimeDirectoryURL: URL(fileURLWithPath: "/tmp"),
+            daemonBindAddress: "127.0.0.1",
+            daemonBindPort: 1234,
             validatePaths: false,
             autoRouteSystemOutput: false
         )
@@ -105,6 +144,8 @@ final class DSPManagerTests: XCTestCase {
             configURL: URL(fileURLWithPath: "/tmp/config.yml"),
             runtimeDirectoryURL: URL(fileURLWithPath: "/tmp"),
             startupTimeout: 0.2,
+            daemonBindAddress: "127.0.0.1",
+            daemonBindPort: 1234,
             validatePaths: false,
             autoRouteSystemOutput: false
         )
@@ -115,6 +156,108 @@ final class DSPManagerTests: XCTestCase {
             }
         }
         XCTAssertEqual(mockProcess.terminateCallCount, 1)
+        XCTAssertNil(manager.process)
+    }
+
+    func testApplyPreferencesUsesDaemonBindEndpoint() throws {
+        let mockProcess = MockDSPProcess()
+        var probedHost: String?
+        var probedPort: Int?
+        let manager = DSPManager(
+            processFactory: { mockProcess },
+            portProbe: { host, port, _ in
+                probedHost = host
+                probedPort = port
+                return true
+            },
+            executableURL: URL(fileURLWithPath: "/usr/bin/env"),
+            configURL: URL(fileURLWithPath: "/tmp/config.yml"),
+            runtimeDirectoryURL: URL(fileURLWithPath: "/tmp"),
+            logFileURL: URL(fileURLWithPath: "/tmp/camilladsp.log"),
+            stateFileURL: URL(fileURLWithPath: "/tmp/state.json"),
+            daemonBindAddress: "127.0.0.1",
+            daemonBindPort: 1234,
+            validatePaths: false,
+            autoRouteSystemOutput: false
+        )
+
+        manager.applyPreferences(
+            WaveDaemonPreferencesSnapshot(
+                preferredWebSocketURL: "ws://remote.example.com:9999",
+                daemonBindAddress: "0.0.0.0",
+                daemonBindPort: 5678,
+                autoRouteSystemOutput: false,
+                processingOutputDevice: "System DSP Output",
+                autoConnectOnLaunch: false
+            )
+        )
+
+        _ = try manager.startDSP()
+        XCTAssertEqual(probedHost, "127.0.0.1")
+        XCTAssertEqual(probedPort, 5678)
+        XCTAssertEqual(mockProcess.arguments?.contains("remote.example.com"), false)
+        XCTAssertEqual(
+            mockProcess.arguments,
+            [
+                "--loglevel", "info",
+                "--logfile", "/tmp/camilladsp.log",
+                "--address", "0.0.0.0",
+                "--port", "5678",
+                "--statefile", "/tmp/state.json",
+                "/tmp/config.yml",
+            ]
+        )
+    }
+
+    func testRoutingFailureAfterReadinessTerminatesAndClearsState() throws {
+        let tempRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WaveDaemonTests")
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        let switchPath = tempRoot.appendingPathComponent("SwitchAudioSource")
+        let script = """
+        #!/usr/bin/env bash
+        set -euo pipefail
+        if [[ "$1" == "-a" ]]; then
+          printf '%s\\n' "Built-in Output" "System DSP Output"
+          exit 0
+        fi
+        if [[ "$1" == "-c" ]]; then
+          printf '%s\\n' "Built-in Output"
+          exit 0
+        fi
+        if [[ "$1" == "-s" ]]; then
+          exit 0
+        fi
+        exit 1
+        """
+        try script.write(to: switchPath, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: switchPath.path)
+
+        let mockProcess = MockDSPProcess()
+        let manager = DSPManager(
+            processFactory: { mockProcess },
+            portProbe: { _, _, _ in true },
+            executableURL: URL(fileURLWithPath: "/usr/bin/env"),
+            configURL: URL(fileURLWithPath: "/tmp/config.yml"),
+            runtimeDirectoryURL: URL(fileURLWithPath: "/tmp"),
+            daemonBindAddress: "127.0.0.1",
+            daemonBindPort: 1234,
+            validatePaths: false,
+            autoRouteSystemOutput: true,
+            processingOutputDevice: "System DSP Output",
+            switchAudioSourcePath: switchPath.path
+        )
+
+        XCTAssertThrowsError(try manager.startDSP()) { error in
+            guard case DSPManagerError.routingFailed = error else {
+                return XCTFail("Expected routingFailed, got: \(error)")
+            }
+        }
+        XCTAssertEqual(mockProcess.terminateCallCount, 1)
+        XCTAssertNil(manager.process)
     }
 
     func testRuntimeEndpointOverridesPersistedEndpointForSessionOnlyPreflight() throws {

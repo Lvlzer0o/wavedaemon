@@ -93,6 +93,10 @@ final class CamillaWebSocket: ObservableObject {
     private var socketTask: URLSessionWebSocketTask?
     private var receiveTask: Task<Void, Never>?
     private var pending: [String: [PendingRequest]] = [:]
+    // CamillaDSP replies do not include correlation IDs, so same-command requests must be
+    // serialized to avoid ambiguous FIFO matching when replies arrive out of order.
+    private var commandLocks: Set<String> = []
+    private var commandLockWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
 
     init(session: URLSession = .shared) {
         self.session = session
@@ -155,6 +159,8 @@ final class CamillaWebSocket: ObservableObject {
         let requestID = UUID()
         let responseKey = command.responseKey
         let payload = try command.encodedMessage()
+        await acquireCommandLock(for: responseKey)
+        defer { releaseCommandLock(for: responseKey) }
 
         let waitForReply = Task<[String: Any], Error> { [weak self] in
             try await withCheckedThrowingContinuation { continuation in
@@ -162,10 +168,7 @@ final class CamillaWebSocket: ObservableObject {
                     continuation.resume(throwing: CamillaWebSocketError.notConnected)
                     return
                 }
-
-                Task { @MainActor in
-                    self.enqueuePending(id: requestID, key: responseKey, continuation: continuation)
-                }
+                self.enqueuePending(id: requestID, key: responseKey, continuation: continuation)
             }
         }
 
@@ -341,5 +344,34 @@ final class CamillaWebSocket: ObservableObject {
             }
         }
         pending.removeAll()
+    }
+
+    private func acquireCommandLock(for key: String) async {
+        if !commandLocks.contains(key) {
+            commandLocks.insert(key)
+            return
+        }
+
+        await withCheckedContinuation { continuation in
+            var queue = commandLockWaiters[key] ?? []
+            queue.append(continuation)
+            commandLockWaiters[key] = queue
+        }
+    }
+
+    private func releaseCommandLock(for key: String) {
+        guard var queue = commandLockWaiters[key], !queue.isEmpty else {
+            commandLocks.remove(key)
+            commandLockWaiters.removeValue(forKey: key)
+            return
+        }
+
+        let waiter = queue.removeFirst()
+        if queue.isEmpty {
+            commandLockWaiters.removeValue(forKey: key)
+        } else {
+            commandLockWaiters[key] = queue
+        }
+        waiter.resume()
     }
 }

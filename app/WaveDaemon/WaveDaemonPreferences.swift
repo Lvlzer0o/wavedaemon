@@ -2,6 +2,8 @@ import Foundation
 
 struct WaveDaemonPreferencesSnapshot {
     let preferredWebSocketURL: String
+    let daemonBindAddress: String
+    let daemonBindPort: Int
     let autoRouteSystemOutput: Bool
     let processingOutputDevice: String
     let autoConnectOnLaunch: Bool
@@ -10,6 +12,8 @@ struct WaveDaemonPreferencesSnapshot {
 enum WaveDaemonPreferences {
     enum Keys {
         static let preferredWebSocketURL = "wavedaemon.preferredWebSocketURL"
+        static let daemonBindAddress = "wavedaemon.daemonBindAddress"
+        static let daemonBindPort = "wavedaemon.daemonBindPort"
         static let autoRouteSystemOutput = "wavedaemon.autoRouteSystemOutput"
         static let processingOutputDevice = "wavedaemon.processingOutputDevice"
         static let autoConnectOnLaunch = "wavedaemon.autoConnectOnLaunch"
@@ -27,6 +31,8 @@ enum WaveDaemonPreferences {
     ) -> WaveDaemonPreferencesSnapshot {
         WaveDaemonPreferencesSnapshot(
             preferredWebSocketURL: currentWebSocketURL(userDefaults: userDefaults, environment: environment),
+            daemonBindAddress: currentDaemonBindAddress(userDefaults: userDefaults, environment: environment),
+            daemonBindPort: currentDaemonBindPort(userDefaults: userDefaults, environment: environment),
             autoRouteSystemOutput: currentAutoRouteSystemOutput(
                 userDefaults: userDefaults,
                 environment: environment
@@ -42,7 +48,11 @@ enum WaveDaemonPreferences {
     static func defaultWebSocketURLString(
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> String {
-        "ws://\(defaultWebSocketAddress(environment: environment)):\(defaultWebSocketPort(environment: environment))"
+        let explicit = environment["CAMILLADSP_CLIENT_WS_URL"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let explicit, !explicit.isEmpty {
+            return explicit
+        }
+        return "ws://\(defaultWebSocketAddress(environment: environment)):\(defaultWebSocketPort(environment: environment))"
     }
 
     static func currentWebSocketURL(
@@ -193,6 +203,31 @@ enum WaveDaemonPreferences {
         return userDefaults.bool(forKey: Keys.autoConnectOnLaunch)
     }
 
+    static func currentDaemonBindAddress(
+        userDefaults: UserDefaults = .standard,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> String {
+        if let value = userDefaults.string(forKey: Keys.daemonBindAddress)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !value.isEmpty {
+            return value
+        }
+        return defaultDaemonBindAddress(environment: environment)
+    }
+
+    static func currentDaemonBindPort(
+        userDefaults: UserDefaults = .standard,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Int {
+        if let rawValue = userDefaults.object(forKey: Keys.daemonBindPort) as? NSNumber {
+            let value = rawValue.intValue
+            if (1...65_535).contains(value) {
+                return value
+            }
+        }
+        return defaultDaemonBindPort(environment: environment)
+    }
+
     static func parseWebSocketEndpoint(from urlString: String) -> (host: String, port: Int)? {
         guard let components = normalizedWebSocketComponents(from: urlString) else {
             return nil
@@ -205,6 +240,8 @@ enum WaveDaemonPreferences {
 
     static func resetToDefaults(userDefaults: UserDefaults = .standard) {
         userDefaults.set(defaultWebSocketURLString(), forKey: Keys.preferredWebSocketURL)
+        userDefaults.set(defaultDaemonBindAddress(), forKey: Keys.daemonBindAddress)
+        userDefaults.set(defaultDaemonBindPort(), forKey: Keys.daemonBindPort)
         userDefaults.set(defaultAutoRouteSystemOutput(), forKey: Keys.autoRouteSystemOutput)
         userDefaults.set(defaultProcessingOutputDevice(), forKey: Keys.processingOutputDevice)
         userDefaults.set(false, forKey: Keys.autoConnectOnLaunch)
@@ -226,6 +263,27 @@ enum WaveDaemonPreferences {
             return 1234
         }
         return value
+    }
+
+    private static func defaultDaemonBindAddress(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> String {
+        let explicit = environment["CAMILLADSP_BIND_ADDRESS"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let explicit, !explicit.isEmpty {
+            return explicit
+        }
+        return defaultWebSocketAddress(environment: environment)
+    }
+
+    private static func defaultDaemonBindPort(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Int {
+        if let rawValue = environment["CAMILLADSP_BIND_PORT"],
+           let value = Int(rawValue),
+           (1...65_535).contains(value) {
+            return value
+        }
+        return defaultWebSocketPort(environment: environment)
     }
 
     private static func normalizedWebSocketComponents(
