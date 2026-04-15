@@ -138,6 +138,15 @@ final class DSPManager {
         processingOutputDevice = preferences.processingOutputDevice
     }
 
+    func setRuntimeWebSocketEndpoint(host: String, port: Int) {
+        guard !host.isEmpty, (1...65_535).contains(port) else {
+            return
+        }
+
+        wsAddress = host
+        wsPort = port
+    }
+
     func isWebSocketReachable(timeout: TimeInterval = 0.2) -> Bool {
         portProbe(wsAddress, wsPort, timeout)
     }

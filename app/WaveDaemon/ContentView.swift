@@ -1,8 +1,18 @@
 import SwiftUI
 import Combine
 
+private enum WaveDaemonPalette {
+    static let brandCyan = Color(red: 0.23, green: 0.73, blue: 0.94)
+    static let brandAmber = Color(red: 0.98, green: 0.72, blue: 0.28)
+    static let brandEmerald = Color(red: 0.27, green: 0.83, blue: 0.60)
+    static let brandCrimson = Color(red: 0.92, green: 0.37, blue: 0.36)
+    static let shellTop = Color(red: 0.05, green: 0.07, blue: 0.10)
+    static let shellBottom = Color(red: 0.09, green: 0.11, blue: 0.16)
+    static let panelFill = Color.white.opacity(0.055)
+}
+
 struct ContentView: View {
-    private enum ReverbStyle: String, CaseIterable, Identifiable {
+    enum ReverbStyle: String, CaseIterable, Identifiable {
         case smallRoom = "Small Room"
         case vocalPlate = "Vocal Plate"
         case largeHall = "Large Hall"
@@ -21,14 +31,14 @@ struct ContentView: View {
         }
     }
 
-    private enum ReverbQuality: String, CaseIterable, Identifiable {
+    enum ReverbQuality: String, CaseIterable, Identifiable {
         case standard = "Standard"
         case high = "High"
 
         var id: String { rawValue }
     }
 
-    @StateObject private var camilla = CamillaWebSocket()
+    @State private var camilla = CamillaWebSocket()
 
     private let profileStore = ProfileStore()
     private let dspManager = DSPManager.shared
@@ -45,36 +55,546 @@ struct ContentView: View {
 
     @State private var profiles: [AudioProfile] = []
     @State private var selectedProfileName = ""
-    @State private var reverbStyle: ReverbStyle = .vocalPlate
-    @State private var reverbQuality: ReverbQuality = .high
-    @State private var reverbWetPercent: Double = 28.0
-    @State private var reverbDryPercent: Double = 86.0
     @State private var lastDryProfileName = "flat.yml"
-    @State private var volumeDB: Double = 0
+    @State private var websocketURLInput = WaveDaemonPreferences.currentWebSocketURL()
     @State private var statusMessage = "Disconnected"
-    @State private var isDSPRunning = false
     @State private var isStartingDSP = false
     @State private var isConnecting = false
-    @State private var lastReportedExitStatus: Int32?
     @State private var didAttemptAutoConnect = false
+    @State private var expectedShutdownDeadline: Date?
 
-    private let brandCyan = Color(red: 0.23, green: 0.73, blue: 0.94)
-    private let brandAmber = Color(red: 0.98, green: 0.72, blue: 0.28)
-    private let brandEmerald = Color(red: 0.27, green: 0.83, blue: 0.60)
-    private let brandCrimson = Color(red: 0.92, green: 0.37, blue: 0.36)
-    private let shellTop = Color(red: 0.05, green: 0.07, blue: 0.10)
-    private let shellBottom = Color(red: 0.09, green: 0.11, blue: 0.16)
-    private let panelFill = Color.white.opacity(0.055)
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                WaveDaemonBackground()
+
+                ScrollView {
+                    VStack(spacing: 22) {
+                        HeroPanel(
+                            websocketURL: $websocketURLInput,
+                            camilla: camilla,
+                            dspManager: dspManager,
+                            isStartingDSP: isStartingDSP,
+                            isConnecting: isConnecting,
+                            onStartDSP: startDSP,
+                            onStopDSP: stopDSP,
+                            onConnect: connect,
+                            onDisconnect: disconnect,
+                            onUnexpectedExit: handleUnexpectedDSPExit
+                        )
+                        dashboardPanels(for: geometry.size.width)
+                        StatusFeedPanel(statusMessage: statusMessage, camilla: camilla)
+                    }
+                    .padding(28)
+                    .frame(maxWidth: 1200)
+                    .frame(maxWidth: .infinity)
+                }
+                .scrollIndicators(.hidden)
+            }
+        }
+        .frame(minWidth: 900, minHeight: 780)
+        .task {
+            reconcileStoredWebSocketPreference()
+            syncRuntimePreferences()
+            loadProfiles()
+            attemptAutoConnectIfNeeded()
+        }
+        .onChange(of: websocketURL) {
+            if websocketURLInput != websocketURL {
+                websocketURLInput = websocketURL
+            }
+            syncRuntimePreferences()
+        }
+        .onChange(of: websocketURLInput) {
+            persistWebSocketURLInputIfSafe()
+        }
+        .onChange(of: autoRouteSystemOutput) {
+            syncRuntimePreferences()
+        }
+        .onChange(of: processingOutputDevice) {
+            syncRuntimePreferences()
+        }
+    }
+
+    @ViewBuilder
+    private func dashboardPanels(for width: CGFloat) -> some View {
+        if width >= 1120 {
+            HStack(alignment: .top, spacing: 20) {
+                VStack(spacing: 20) {
+                    ProfilePanel(
+                        camilla: camilla,
+                        profiles: profiles,
+                        selectedProfileName: $selectedProfileName,
+                        lastDryProfileName: lastDryProfileName,
+                        onApply: applyProfile,
+                        onRefresh: loadProfiles
+                    )
+                    MasterOutputPanel(
+                        camilla: camilla,
+                        onSetVolume: sendVolume,
+                        onToggleMute: toggleMute
+                    )
+                }
+                .frame(width: 360)
+
+                VStack(spacing: 20) {
+                    ReverbLabPanel(
+                        camilla: camilla,
+                        onApply: applyReverb,
+                        onBypass: bypassReverb
+                    )
+                }
+                .frame(maxWidth: .infinity)
+            }
+        } else {
+            VStack(spacing: 20) {
+                ProfilePanel(
+                    camilla: camilla,
+                    profiles: profiles,
+                    selectedProfileName: $selectedProfileName,
+                    lastDryProfileName: lastDryProfileName,
+                    onApply: applyProfile,
+                    onRefresh: loadProfiles
+                )
+                ReverbLabPanel(
+                    camilla: camilla,
+                    onApply: applyReverb,
+                    onBypass: bypassReverb
+                )
+                MasterOutputPanel(
+                    camilla: camilla,
+                    onSetVolume: sendVolume,
+                    onToggleMute: toggleMute
+                )
+            }
+        }
+    }
+
+    private func handleUnexpectedDSPExit(_ exitStatus: Int32) {
+        if let deadline = expectedShutdownDeadline, deadline > Date() {
+            expectedShutdownDeadline = nil
+            return
+        }
+
+        expectedShutdownDeadline = nil
+
+        if camilla.isConnected {
+            camilla.disconnect()
+        }
+
+        statusMessage = "CamillaDSP exited unexpectedly (\(exitStatus))"
+    }
+
+    private func startDSP() {
+        guard !isStartingDSP else { return }
+
+        expectedShutdownDeadline = nil
+        isStartingDSP = true
+
+        Task {
+            defer { isStartingDSP = false }
+
+            do {
+                let started = try dspManager.startDSP()
+
+                if started {
+                    if let routingMessage = dspManager.lastRoutingMessage, !routingMessage.isEmpty {
+                        statusMessage = "CamillaDSP started. \(routingMessage)"
+                    } else {
+                        statusMessage = "CamillaDSP started"
+                    }
+                } else {
+                    statusMessage = "CamillaDSP already running"
+                }
+            } catch {
+                statusMessage = "Failed to start DSP: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func stopDSP() {
+        let didStop = dspManager.stopDSP()
+        expectedShutdownDeadline = didStop ? Date().addingTimeInterval(2.0) : nil
+
+        if camilla.isConnected {
+            camilla.disconnect()
+        }
+
+        let baseMessage = didStop ? "CamillaDSP stopped" : "CamillaDSP was not running"
+        if let routingMessage = dspManager.lastRoutingMessage, !routingMessage.isEmpty {
+            statusMessage = "\(baseMessage). \(routingMessage)"
+        } else {
+            statusMessage = baseMessage
+        }
+    }
+
+    private func connect() {
+        guard !isConnecting else { return }
+
+        expectedShutdownDeadline = nil
+        isConnecting = true
+
+        Task {
+            defer { isConnecting = false }
+
+            do {
+                let connectionURL = WaveDaemonPreferences.normalizedWebSocketURL(from: websocketURLInput)
+                    ?? websocketURLInput.trimmingCharacters(in: .whitespacesAndNewlines)
+                let storageBehavior = WaveDaemonPreferences.webSocketURLStorageBehavior(from: websocketURLInput)
+                let managesLocalDSP = shouldManageLocalDSP(for: connectionURL)
+
+                if managesLocalDSP,
+                   let endpoint = WaveDaemonPreferences.parseWebSocketEndpoint(from: connectionURL) {
+                    dspManager.setRuntimeWebSocketEndpoint(host: endpoint.host, port: endpoint.port)
+                }
+
+                let routingMessage = managesLocalDSP ? dspManager.ensureProcessingRoute() : nil
+
+                if managesLocalDSP && !dspManager.isDSPRunning && !dspManager.isWebSocketReachable(timeout: 0.2) {
+                    do {
+                        _ = try dspManager.startDSP()
+                        try await Task.sleep(for: .milliseconds(350))
+                    } catch {
+                        if !dspManager.isWebSocketReachable(timeout: 0.2) {
+                            throw error
+                        }
+                        statusMessage = "Using existing CamillaDSP instance"
+                    }
+                }
+
+                try await camilla.connect(urlString: connectionURL)
+                try await camilla.refreshState()
+
+                let persistenceSuffix: String
+                switch storageBehavior {
+                case .sessionOnly(_):
+                    persistenceSuffix = " Endpoint not saved."
+                case .invalid, .persistent(_):
+                    persistenceSuffix = ""
+                }
+
+                if let routingMessage, !routingMessage.isEmpty {
+                    statusMessage = "Connected to CamillaDSP. \(routingMessage)\(persistenceSuffix)"
+                } else {
+                    statusMessage = "Connected to CamillaDSP.\(persistenceSuffix)"
+                }
+            } catch {
+                statusMessage = "Connection failed: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func disconnect() {
+        camilla.disconnect()
+        statusMessage = "Disconnected"
+    }
+
+    private func loadProfiles() {
+        do {
+            profiles = try profileStore.listProfiles()
+            if !profiles.contains(where: { $0.name == selectedProfileName }) {
+                selectedProfileName = profiles.first?.name ?? ""
+            }
+
+            if let flatProfile = profiles.first(where: { $0.name == "flat.yml" }) {
+                lastDryProfileName = flatProfile.name
+            } else if !lastDryProfileName.isEmpty,
+                      !profiles.contains(where: { $0.name == lastDryProfileName }) {
+                lastDryProfileName = ""
+            }
+
+            if profiles.isEmpty {
+                statusMessage = "No profiles found in dsp/profiles"
+            }
+        } catch {
+            profiles = []
+            selectedProfileName = ""
+            statusMessage = """
+            Failed to load profiles: \(error.localizedDescription)
+            Path: \(profileStore.currentProfilesDirectoryURL().path)
+            """
+        }
+    }
+
+    private func applyProfile() {
+        guard !selectedProfileName.isEmpty else {
+            statusMessage = "Pick a profile first"
+            return
+        }
+
+        guard let selectedProfile = profiles.first(where: { $0.name == selectedProfileName }) else {
+            statusMessage = "Selected profile is no longer available. Refresh and try again."
+            return
+        }
+
+        performProfileApply(
+            selectedProfile,
+            statusPrefix: "Applied profile",
+            updateDryBaseline: !isReverbProfileName(selectedProfile.name)
+        )
+    }
+
+    private func applyReverb(
+        style: ReverbStyle,
+        quality: ReverbQuality,
+        wetPercent: Double,
+        dryPercent: Double
+    ) {
+        guard camilla.isConnected else {
+            statusMessage = "Connect to CamillaDSP first"
+            return
+        }
+
+        guard let profile = resolvedReverbProfile(for: style, quality: quality) else {
+            statusMessage = "No reverb profile found for \(style.rawValue) (\(quality.rawValue))"
+            return
+        }
+
+        selectedProfileName = profile.name
+        performReverbApply(profile, wetPercent: wetPercent, dryPercent: dryPercent)
+    }
+
+    private func bypassReverb() {
+        guard camilla.isConnected else {
+            statusMessage = "Connect to CamillaDSP first"
+            return
+        }
+
+        let fallbackNames = [lastDryProfileName, "flat.yml", "laptop_speakers.yml"]
+        guard let profile = fallbackNames
+            .compactMap({ name in profiles.first(where: { $0.name == name }) })
+            .first else {
+            statusMessage = "No dry profile found. Select a profile and click Apply Profile."
+            return
+        }
+
+        selectedProfileName = profile.name
+        performProfileApply(profile, statusPrefix: "Bypassed reverb with", updateDryBaseline: true)
+    }
+
+    private func performProfileApply(
+        _ profile: AudioProfile,
+        statusPrefix: String,
+        updateDryBaseline: Bool
+    ) {
+        Task {
+            do {
+                let configText = try String(contentsOf: profile.fileURL, encoding: .utf8)
+                try await camilla.applyProfile(configText: configText)
+                if updateDryBaseline && !isReverbProfileName(profile.name) {
+                    lastDryProfileName = profile.name
+                }
+                statusMessage = "\(statusPrefix): \(profile.name)"
+            } catch {
+                statusMessage = "Profile apply failed: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func performReverbApply(_ profile: AudioProfile, wetPercent: Double, dryPercent: Double) {
+        Task {
+            do {
+                let profileText = try String(contentsOf: profile.fileURL, encoding: .utf8)
+                let mixedConfig = try reverbMixRenderer.renderMixedConfig(
+                    profileURL: profile.fileURL,
+                    profileText: profileText,
+                    wetPercent: wetPercent,
+                    dryPercent: dryPercent
+                )
+                try await camilla.applyProfile(configText: mixedConfig)
+                statusMessage = """
+                Applied reverb: \(profile.name) \
+                (Wet \(Int(wetPercent.rounded()))%, Dry \(Int(dryPercent.rounded()))%)
+                """
+            } catch {
+                statusMessage = "Reverb apply failed: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func resolvedReverbProfile(for style: ReverbStyle, quality: ReverbQuality) -> AudioProfile? {
+        let preferredNames = preferredReverbProfileNames(for: style, quality: quality)
+        return preferredNames.compactMap { name in
+            profiles.first(where: { $0.name == name })
+        }.first
+    }
+
+    private func preferredReverbProfileNames(
+        for style: ReverbStyle,
+        quality: ReverbQuality
+    ) -> [String] {
+        let standardName = "\(style.profileStem).yml"
+        switch quality {
+        case .standard:
+            return [standardName]
+        case .high:
+            return ["\(style.profileStem)_hq.yml", standardName]
+        }
+    }
+
+    private func isReverbProfileName(_ name: String) -> Bool {
+        let normalized = name.lowercased()
+        return normalized.contains("small_room")
+            || normalized.contains("vocal_plate")
+            || normalized.contains("large_hall")
+    }
+
+    private func sendVolume(_ value: Double) {
+        Task {
+            do {
+                try await camilla.setVolume(value)
+                statusMessage = "Volume set to \(value.formatted(.number.precision(.fractionLength(1)))) dB"
+            } catch {
+                statusMessage = "Volume update failed: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func toggleMute() {
+        Task {
+            do {
+                let muted = try await camilla.toggleMute()
+                statusMessage = muted ? "Muted" : "Unmuted"
+            } catch {
+                statusMessage = "Mute toggle failed: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func syncRuntimePreferences() {
+        dspManager.applyPreferences()
+    }
+
+    private func reconcileStoredWebSocketPreference() {
+        let persistedURL = WaveDaemonPreferences.currentWebSocketURL()
+
+        if websocketURL != persistedURL {
+            websocketURL = persistedURL
+        }
+
+        if websocketURLInput != persistedURL {
+            websocketURLInput = persistedURL
+        }
+    }
+
+    private func persistWebSocketURLInputIfSafe() {
+        guard let persistedURL = WaveDaemonPreferences.persistableWebSocketURL(from: websocketURLInput) else {
+            return
+        }
+
+        if websocketURL != persistedURL {
+            websocketURL = persistedURL
+        }
+
+        if websocketURLInput != persistedURL {
+            websocketURLInput = persistedURL
+        }
+    }
+
+    private func shouldManageLocalDSP(for urlString: String) -> Bool {
+        guard let endpoint = WaveDaemonPreferences.parseWebSocketEndpoint(from: urlString) else {
+            return false
+        }
+
+        switch endpoint.host.lowercased() {
+        case "127.0.0.1", "localhost", "::1":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func attemptAutoConnectIfNeeded() {
+        guard autoConnectOnLaunch, !didAttemptAutoConnect else {
+            return
+        }
+
+        didAttemptAutoConnect = true
+        connect()
+    }
+}
+
+private struct WaveDaemonBackground: View {
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                colors: [WaveDaemonPalette.shellTop, WaveDaemonPalette.shellBottom],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            Circle()
+                .fill(WaveDaemonPalette.brandCyan.opacity(0.15))
+                .frame(width: 420, height: 420)
+                .blur(radius: 110)
+                .offset(x: -330, y: -250)
+
+            Circle()
+                .fill(WaveDaemonPalette.brandAmber.opacity(0.10))
+                .frame(width: 360, height: 360)
+                .blur(radius: 120)
+                .offset(x: 360, y: 320)
+
+            Circle()
+                .fill(WaveDaemonPalette.brandEmerald.opacity(0.08))
+                .frame(width: 300, height: 300)
+                .blur(radius: 120)
+                .offset(x: 220, y: -280)
+        }
+        .ignoresSafeArea()
+    }
+}
+
+private struct HeroPanel: View {
+    @Binding var websocketURL: String
+    @ObservedObject var camilla: CamillaWebSocket
+
+    let isStartingDSP: Bool
+    let isConnecting: Bool
+    let onStartDSP: () -> Void
+    let onStopDSP: () -> Void
+    let onConnect: () -> Void
+    let onDisconnect: () -> Void
+
+    @StateObject private var engineStatus: EngineStatusMonitor
+
+    init(
+        websocketURL: Binding<String>,
+        camilla: CamillaWebSocket,
+        dspManager: DSPManager,
+        isStartingDSP: Bool,
+        isConnecting: Bool,
+        onStartDSP: @escaping () -> Void,
+        onStopDSP: @escaping () -> Void,
+        onConnect: @escaping () -> Void,
+        onDisconnect: @escaping () -> Void,
+        onUnexpectedExit: @escaping (Int32) -> Void
+    ) {
+        _websocketURL = websocketURL
+        _camilla = ObservedObject(wrappedValue: camilla)
+        self.isStartingDSP = isStartingDSP
+        self.isConnecting = isConnecting
+        self.onStartDSP = onStartDSP
+        self.onStopDSP = onStopDSP
+        self.onConnect = onConnect
+        self.onDisconnect = onDisconnect
+        _engineStatus = StateObject(
+            wrappedValue: EngineStatusMonitor(
+                dspManager: dspManager,
+                onUnexpectedExit: onUnexpectedExit
+            )
+        )
+    }
 
     private var engineStatusText: String {
         if isStartingDSP {
             return "Starting"
         }
-        return isDSPRunning ? "Running" : "Stopped"
+        return engineStatus.isRunning ? "Running" : "Stopped"
     }
 
     private var engineStatusColor: Color {
-        isDSPRunning ? brandEmerald : brandCrimson
+        engineStatus.isRunning ? WaveDaemonPalette.brandEmerald : WaveDaemonPalette.brandCrimson
     }
 
     private var sessionStatusText: String {
@@ -86,122 +606,38 @@ struct ContentView: View {
 
     private var sessionStatusColor: Color {
         if isConnecting {
-            return brandAmber
+            return WaveDaemonPalette.brandAmber
         }
-        return camilla.isConnected ? brandCyan : Color.white.opacity(0.45)
+        return camilla.isConnected ? WaveDaemonPalette.brandCyan : Color.white.opacity(0.45)
     }
 
-    private var selectedProfileSummary: String {
-        selectedProfileName.isEmpty ? "No profile loaded" : selectedProfileName
+    private var endpointStorageBehavior: WaveDaemonPreferences.WebSocketURLStorageBehavior {
+        WaveDaemonPreferences.webSocketURLStorageBehavior(from: websocketURL)
     }
 
-    private var dryBaselineSummary: String {
-        lastDryProfileName.isEmpty ? "Unset" : lastDryProfileName
-    }
-
-    private var reverbBlendSummary: String {
-        "\(Int(reverbWetPercent.rounded()))% wet / \(Int(reverbDryPercent.rounded()))% dry"
-    }
-
-    private var volumeDisplayText: String {
-        volumeDB.formatted(.number.precision(.fractionLength(1))) + " dB"
-    }
-
-    private var busStatusText: String {
-        if !camilla.isConnected {
-            return "Offline"
+    private var endpointHint: String? {
+        switch endpointStorageBehavior {
+        case .invalid:
+            return "Enter a valid ws:// or wss:// endpoint."
+        case .sessionOnly(_):
+            return "URLs with credentials, query strings, or fragments connect for this session only and are not saved."
+        case .persistent(_):
+            return nil
         }
-        return camilla.isMuted ? "Muted" : "Live"
     }
 
-    private var busStatusColor: Color {
-        if !camilla.isConnected {
-            return Color.white.opacity(0.45)
+    private var endpointHintColor: Color {
+        switch endpointStorageBehavior {
+        case .invalid:
+            return WaveDaemonPalette.brandCrimson
+        case .sessionOnly(_):
+            return WaveDaemonPalette.brandAmber
+        case .persistent(_):
+            return Color.white.opacity(0.56)
         }
-        return camilla.isMuted ? brandAmber : brandEmerald
     }
 
     var body: some View {
-        GeometryReader { geometry in
-            ZStack {
-                backgroundView
-
-                ScrollView {
-                    VStack(spacing: 22) {
-                        heroPanel
-                        dashboardPanels(for: geometry.size.width)
-                        statusPanel
-                    }
-                    .padding(28)
-                    .frame(maxWidth: 1200)
-                    .frame(maxWidth: .infinity)
-                }
-                .scrollIndicators(.hidden)
-            }
-        }
-        .frame(minWidth: 900, minHeight: 780)
-        .task {
-            syncRuntimePreferences()
-            refreshDSPRunningState()
-            loadProfiles()
-            attemptAutoConnectIfNeeded()
-        }
-        .onReceive(Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()) { _ in
-            let wasRunning = isDSPRunning
-            refreshDSPRunningState()
-
-            if wasRunning && !isDSPRunning, let exitStatus = dspManager.lastExitStatus,
-               exitStatus != lastReportedExitStatus {
-                lastReportedExitStatus = exitStatus
-                if camilla.isConnected {
-                    camilla.disconnect()
-                }
-                statusMessage = "CamillaDSP exited unexpectedly (\(exitStatus))"
-            }
-        }
-        .onChange(of: websocketURL) { _ in
-            syncRuntimePreferences()
-        }
-        .onChange(of: autoRouteSystemOutput) { _ in
-            syncRuntimePreferences()
-        }
-        .onChange(of: processingOutputDevice) { _ in
-            syncRuntimePreferences()
-        }
-        .animation(.spring(response: 0.42, dampingFraction: 0.86), value: isDSPRunning)
-        .animation(.spring(response: 0.42, dampingFraction: 0.86), value: camilla.isConnected)
-    }
-
-    private var backgroundView: some View {
-        ZStack {
-            LinearGradient(
-                colors: [shellTop, shellBottom],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-
-            Circle()
-                .fill(brandCyan.opacity(0.15))
-                .frame(width: 420, height: 420)
-                .blur(radius: 110)
-                .offset(x: -330, y: -250)
-
-            Circle()
-                .fill(brandAmber.opacity(0.10))
-                .frame(width: 360, height: 360)
-                .blur(radius: 120)
-                .offset(x: 360, y: 320)
-
-            Circle()
-                .fill(brandEmerald.opacity(0.08))
-                .frame(width: 300, height: 300)
-                .blur(radius: 120)
-                .offset(x: 220, y: -280)
-        }
-        .ignoresSafeArea()
-    }
-
-    private var heroPanel: some View {
         VStack(alignment: .leading, spacing: 24) {
             HStack(alignment: .top, spacing: 24) {
                 VStack(alignment: .leading, spacing: 14) {
@@ -261,6 +697,12 @@ struct ContentView: View {
                     .padding(.vertical, 13)
                     .background(fieldBackground)
                     .accessibilityIdentifier("websocketURLField")
+
+                if let endpointHint {
+                    Text(endpointHint)
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundStyle(endpointHintColor)
+                }
             }
         }
         .panelCard(fill: LinearGradient(
@@ -271,6 +713,12 @@ struct ContentView: View {
             startPoint: .topLeading,
             endPoint: .bottomTrailing
         ))
+        .onAppear {
+            engineStatus.start()
+        }
+        .onDisappear {
+            engineStatus.stop()
+        }
     }
 
     private var signalPathView: some View {
@@ -327,14 +775,14 @@ struct ContentView: View {
             clusterLabel("DSP CONTROL", symbol: "waveform.path.ecg.rectangle")
 
             HStack(spacing: 12) {
-                Button("Start DSP", action: startDSP)
-                    .buttonStyle(PrimaryActionButtonStyle(tint: brandCyan))
-                    .disabled(isStartingDSP || isDSPRunning)
+                Button("Start DSP", action: onStartDSP)
+                    .buttonStyle(PrimaryActionButtonStyle(tint: WaveDaemonPalette.brandCyan))
+                    .disabled(isStartingDSP || engineStatus.isRunning)
                     .accessibilityIdentifier("startDSPButton")
 
-                Button("Stop DSP", action: stopDSP)
+                Button("Stop DSP", action: onStopDSP)
                     .buttonStyle(SecondaryActionButtonStyle())
-                    .disabled(!isDSPRunning)
+                    .disabled(!engineStatus.isRunning)
                     .accessibilityIdentifier("stopDSPButton")
             }
         }
@@ -346,12 +794,12 @@ struct ContentView: View {
             clusterLabel("CONNECTION", symbol: "bolt.horizontal.circle")
 
             HStack(spacing: 12) {
-                Button("Connect", action: connect)
-                    .buttonStyle(PrimaryActionButtonStyle(tint: brandEmerald))
+                Button("Connect", action: onConnect)
+                    .buttonStyle(PrimaryActionButtonStyle(tint: WaveDaemonPalette.brandEmerald))
                     .disabled(camilla.isConnected || isConnecting)
                     .accessibilityIdentifier("connectButton")
 
-                Button("Disconnect", action: disconnect)
+                Button("Disconnect", action: onDisconnect)
                     .buttonStyle(SecondaryActionButtonStyle())
                     .disabled(!camilla.isConnected)
                     .accessibilityIdentifier("disconnectButton")
@@ -372,32 +820,34 @@ struct ContentView: View {
         .foregroundStyle(.white.opacity(0.60))
     }
 
-    @ViewBuilder
-    private func dashboardPanels(for width: CGFloat) -> some View {
-        if width >= 1120 {
-            HStack(alignment: .top, spacing: 20) {
-                VStack(spacing: 20) {
-                    profilePanel
-                    outputPanel
-                }
-                .frame(width: 360)
+    private var fieldBackground: some View {
+        RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .fill(Color.black.opacity(0.22))
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.06))
+            )
+    }
+}
 
-                VStack(spacing: 20) {
-                    reverbPanel
-                }
-                .frame(maxWidth: .infinity)
-            }
-        } else {
-            VStack(spacing: 20) {
-                profilePanel
-                reverbPanel
-                outputPanel
-            }
-        }
+private struct ProfilePanel: View {
+    @ObservedObject var camilla: CamillaWebSocket
+    let profiles: [AudioProfile]
+    @Binding var selectedProfileName: String
+    let lastDryProfileName: String
+    let onApply: () -> Void
+    let onRefresh: () -> Void
+
+    private var selectedProfileSummary: String {
+        selectedProfileName.isEmpty ? "No profile loaded" : selectedProfileName
     }
 
-    private var profilePanel: some View {
-        sectionCard(
+    private var dryBaselineSummary: String {
+        lastDryProfileName.isEmpty ? "Unset" : lastDryProfileName
+    }
+
+    var body: some View {
+        SectionCard(
             title: "Profiles",
             subtitle: "Swap processing signatures instantly and keep a reliable dry baseline ready.",
             symbol: "square.stack.3d.up"
@@ -408,14 +858,14 @@ struct ContentView: View {
                         title: "Selected",
                         value: selectedProfileSummary,
                         detail: "Current tone stack",
-                        tint: brandCyan
+                        tint: WaveDaemonPalette.brandCyan
                     )
 
                     MetricTile(
                         title: "Dry Baseline",
                         value: dryBaselineSummary,
                         detail: "\(profiles.count) available profiles",
-                        tint: brandAmber
+                        tint: WaveDaemonPalette.brandAmber
                     )
                 }
 
@@ -434,21 +884,36 @@ struct ContentView: View {
                 }
 
                 HStack(spacing: 12) {
-                    Button("Apply Profile", action: applyProfile)
-                        .buttonStyle(PrimaryActionButtonStyle(tint: brandAmber))
+                    Button("Apply Profile", action: onApply)
+                        .buttonStyle(PrimaryActionButtonStyle(tint: WaveDaemonPalette.brandAmber))
                         .disabled(!camilla.isConnected || selectedProfileName.isEmpty)
                         .accessibilityIdentifier("applyProfileButton")
 
-                    Button("Refresh", action: loadProfiles)
+                    Button("Refresh", action: onRefresh)
                         .buttonStyle(SecondaryActionButtonStyle())
                         .accessibilityIdentifier("refreshProfilesButton")
                 }
             }
         }
     }
+}
 
-    private var reverbPanel: some View {
-        sectionCard(
+private struct ReverbLabPanel: View {
+    @ObservedObject var camilla: CamillaWebSocket
+    let onApply: (ContentView.ReverbStyle, ContentView.ReverbQuality, Double, Double) -> Void
+    let onBypass: () -> Void
+
+    @State private var reverbStyle: ContentView.ReverbStyle = .vocalPlate
+    @State private var reverbQuality: ContentView.ReverbQuality = .high
+    @State private var reverbWetPercent: Double = 28.0
+    @State private var reverbDryPercent: Double = 86.0
+
+    private var reverbBlendSummary: String {
+        "\(Int(reverbWetPercent.rounded()))% wet / \(Int(reverbDryPercent.rounded()))% dry"
+    }
+
+    var body: some View {
+        SectionCard(
             title: "Reverb Lab",
             subtitle: "Shape the space, audition the blend, and commit the room live without touching the core DSP flow.",
             symbol: "sparkles.rectangle.stack"
@@ -459,14 +924,14 @@ struct ContentView: View {
                         title: "Style",
                         value: reverbStyle.rawValue,
                         detail: reverbQuality.rawValue + " quality",
-                        tint: brandCyan
+                        tint: WaveDaemonPalette.brandCyan
                     )
 
                     MetricTile(
                         title: "Blend",
                         value: reverbBlendSummary,
                         detail: "Wet / dry balance",
-                        tint: brandEmerald
+                        tint: WaveDaemonPalette.brandEmerald
                     )
                 }
 
@@ -483,48 +948,48 @@ struct ContentView: View {
                 }
 
                 HStack(spacing: 12) {
-                    Button("Apply Reverb", action: applyReverb)
-                        .buttonStyle(PrimaryActionButtonStyle(tint: brandCyan))
-                        .disabled(!camilla.isConnected)
-                        .accessibilityIdentifier("applyReverbButton")
+                    Button("Apply Reverb") {
+                        onApply(reverbStyle, reverbQuality, reverbWetPercent, reverbDryPercent)
+                    }
+                    .buttonStyle(PrimaryActionButtonStyle(tint: WaveDaemonPalette.brandCyan))
+                    .disabled(!camilla.isConnected)
+                    .accessibilityIdentifier("applyReverbButton")
 
-                    Button("Bypass Reverb", action: bypassReverb)
+                    Button("Bypass Reverb", action: onBypass)
                         .buttonStyle(SecondaryActionButtonStyle())
                         .disabled(!camilla.isConnected)
                         .accessibilityIdentifier("bypassReverbButton")
                 }
 
-                sliderCard(
+                SliderCard(
                     title: "Wet Mix",
                     valueText: "\(Int(reverbWetPercent.rounded()))%",
-                    tint: brandCyan,
-                    slider: {
-                        ConsoleSlider(
-                            value: $reverbWetPercent,
-                            range: 0...100,
-                            step: 1,
-                            tint: brandCyan,
-                            label: "Wet Mix"
-                        )
-                            .accessibilityIdentifier("reverbWetSlider")
-                    }
-                )
+                    tint: WaveDaemonPalette.brandCyan
+                ) {
+                    ConsoleSlider(
+                        value: $reverbWetPercent,
+                        range: 0...100,
+                        step: 1,
+                        tint: WaveDaemonPalette.brandCyan,
+                        label: "Wet Mix"
+                    )
+                    .accessibilityIdentifier("reverbWetSlider")
+                }
 
-                sliderCard(
+                SliderCard(
                     title: "Dry Anchor",
                     valueText: "\(Int(reverbDryPercent.rounded()))%",
-                    tint: brandEmerald,
-                    slider: {
-                        ConsoleSlider(
-                            value: $reverbDryPercent,
-                            range: 0...100,
-                            step: 1,
-                            tint: brandEmerald,
-                            label: "Dry Anchor"
-                        )
-                            .accessibilityIdentifier("reverbDrySlider")
-                    }
-                )
+                    tint: WaveDaemonPalette.brandEmerald
+                ) {
+                    ConsoleSlider(
+                        value: $reverbDryPercent,
+                        range: 0...100,
+                        step: 1,
+                        tint: WaveDaemonPalette.brandEmerald,
+                        label: "Dry Anchor"
+                    )
+                    .accessibilityIdentifier("reverbDrySlider")
+                }
 
                 Text("High quality uses generated *_hq impulse responses when available.")
                     .font(.system(size: 12, weight: .medium, design: .rounded))
@@ -536,7 +1001,7 @@ struct ContentView: View {
     private var reverbStylePicker: some View {
         LabeledPicker(title: "Style") {
             Picker("Style", selection: $reverbStyle) {
-                ForEach(ReverbStyle.allCases) { style in
+                ForEach(ContentView.ReverbStyle.allCases) { style in
                     Text(style.rawValue).tag(style)
                 }
             }
@@ -551,7 +1016,7 @@ struct ContentView: View {
     private var reverbQualityPicker: some View {
         LabeledPicker(title: "Quality") {
             Picker("Quality", selection: $reverbQuality) {
-                ForEach(ReverbQuality.allCases) { quality in
+                ForEach(ContentView.ReverbQuality.allCases) { quality in
                     Text(quality.rawValue).tag(quality)
                 }
             }
@@ -562,9 +1027,47 @@ struct ContentView: View {
             .accessibilityIdentifier("reverbQualityPicker")
         }
     }
+}
 
-    private var outputPanel: some View {
-        sectionCard(
+private struct MasterOutputPanel: View {
+    @ObservedObject var camilla: CamillaWebSocket
+    let onSetVolume: (Double) -> Void
+    let onToggleMute: () -> Void
+
+    @State private var draftVolume: Double
+    @State private var isEditing = false
+
+    init(
+        camilla: CamillaWebSocket,
+        onSetVolume: @escaping (Double) -> Void,
+        onToggleMute: @escaping () -> Void
+    ) {
+        _camilla = ObservedObject(wrappedValue: camilla)
+        self.onSetVolume = onSetVolume
+        self.onToggleMute = onToggleMute
+        _draftVolume = State(initialValue: camilla.currentVolume)
+    }
+
+    private var volumeDisplayText: String {
+        draftVolume.formatted(.number.precision(.fractionLength(1))) + " dB"
+    }
+
+    private var busStatusText: String {
+        if !camilla.isConnected {
+            return "Offline"
+        }
+        return camilla.isMuted ? "Muted" : "Live"
+    }
+
+    private var busStatusColor: Color {
+        if !camilla.isConnected {
+            return Color.white.opacity(0.45)
+        }
+        return camilla.isMuted ? WaveDaemonPalette.brandAmber : WaveDaemonPalette.brandEmerald
+    }
+
+    var body: some View {
+        SectionCard(
             title: "Master Output",
             subtitle: "Trim gain, commit level updates, and mute the bus without losing the current session state.",
             symbol: "dial.high"
@@ -593,41 +1096,62 @@ struct ContentView: View {
                     )
                 }
 
-                sliderCard(
+                SliderCard(
                     title: "Volume",
                     valueText: volumeDisplayText,
-                    tint: brandAmber,
-                    slider: {
-                        ConsoleSlider(
-                            value: $volumeDB,
-                            range: -60...12,
-                            step: 0.5,
-                            tint: brandAmber,
-                            label: "Volume",
-                            onEditingChanged: handleVolumeEditing
-                        )
-                        .disabled(!camilla.isConnected)
-                        .accessibilityIdentifier("volumeSlider")
-                    }
-                )
+                    tint: WaveDaemonPalette.brandAmber
+                ) {
+                    ConsoleSlider(
+                        value: $draftVolume,
+                        range: -60...12,
+                        step: 0.5,
+                        tint: WaveDaemonPalette.brandAmber,
+                        label: "Volume",
+                        onEditingChanged: handleVolumeEditing
+                    )
+                    .disabled(!camilla.isConnected)
+                    .accessibilityIdentifier("volumeSlider")
+                }
 
                 HStack(spacing: 12) {
-                    Button("Set Volume", action: sendVolume)
-                        .buttonStyle(PrimaryActionButtonStyle(tint: brandAmber))
-                        .disabled(!camilla.isConnected)
-                        .accessibilityIdentifier("setVolumeButton")
+                    Button("Set Volume") {
+                        onSetVolume(draftVolume)
+                    }
+                    .buttonStyle(PrimaryActionButtonStyle(tint: WaveDaemonPalette.brandAmber))
+                    .disabled(!camilla.isConnected)
+                    .accessibilityIdentifier("setVolumeButton")
 
-                    Button(camilla.isMuted ? "Unmute" : "Mute", action: toggleMute)
+                    Button(camilla.isMuted ? "Unmute" : "Mute", action: onToggleMute)
                         .buttonStyle(SecondaryActionButtonStyle())
                         .disabled(!camilla.isConnected)
                         .accessibilityIdentifier("toggleMuteButton")
                 }
             }
         }
+        .onChange(of: camilla.currentVolume) { _, newValue in
+            guard !isEditing else { return }
+            draftVolume = newValue
+        }
+        .onChange(of: camilla.isConnected) { _, isConnected in
+            guard isConnected, !isEditing else { return }
+            draftVolume = camilla.currentVolume
+        }
     }
 
-    private var statusPanel: some View {
-        sectionCard(
+    private func handleVolumeEditing(_ editing: Bool) {
+        isEditing = editing
+        if !editing {
+            onSetVolume(draftVolume)
+        }
+    }
+}
+
+private struct StatusFeedPanel: View {
+    let statusMessage: String
+    @ObservedObject var camilla: CamillaWebSocket
+
+    var body: some View {
+        SectionCard(
             title: "Status Feed",
             subtitle: "Live route, connection, and control messages from the audio engine.",
             symbol: "text.bubble"
@@ -635,11 +1159,13 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .top, spacing: 12) {
                     Circle()
-                        .fill((statusMessage.lowercased().contains("failed") || statusMessage.lowercased().contains("error"))
-                              ? brandCrimson
-                              : brandCyan)
+                        .fill(
+                            (statusMessage.lowercased().contains("failed") || statusMessage.lowercased().contains("error"))
+                            ? WaveDaemonPalette.brandCrimson
+                            : WaveDaemonPalette.brandCyan
+                        )
                         .frame(width: 10, height: 10)
-                        .shadow(color: brandCyan.opacity(0.30), radius: 8)
+                        .shadow(color: WaveDaemonPalette.brandCyan.opacity(0.30), radius: 8)
                         .padding(.top, 4)
 
                     Text(statusMessage)
@@ -663,366 +1189,63 @@ struct ContentView: View {
             }
         }
     }
+}
 
-    private var fieldBackground: some View {
-        RoundedRectangle(cornerRadius: 18, style: .continuous)
-            .fill(Color.black.opacity(0.22))
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.06))
-            )
+@MainActor
+private final class EngineStatusMonitor: ObservableObject {
+    @Published private(set) var isRunning = false
+
+    private let dspManager: DSPManager
+    private let onUnexpectedExit: (Int32) -> Void
+    private var timer: Timer?
+    private var lastReportedExitStatus: Int32?
+
+    init(dspManager: DSPManager, onUnexpectedExit: @escaping (Int32) -> Void) {
+        self.dspManager = dspManager
+        self.onUnexpectedExit = onUnexpectedExit
     }
 
-    private func sectionCard<Content: View>(
-        title: String,
-        subtitle: String,
-        symbol: String,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack(alignment: .top, spacing: 14) {
-                Image(systemName: symbol)
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(brandAmber)
-                    .frame(width: 34, height: 34)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(Color.black.opacity(0.18))
-                    )
+    func start() {
+        guard timer == nil else { return }
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title)
-                        .font(.system(size: 22, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.95))
+        refresh()
 
-                    Text(subtitle)
-                        .font(.system(size: 13, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.58))
-                }
-            }
-
-            content()
-        }
-        .panelCard(fill: panelFill)
-    }
-
-    private func sliderCard<SliderContent: View>(
-        title: String,
-        valueText: String,
-        tint: Color,
-        @ViewBuilder slider: () -> SliderContent
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text(title)
-                    .font(.system(size: 14, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.82))
-
-                Spacer()
-
-                Text(valueText)
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.92))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(
-                        Capsule(style: .continuous)
-                            .fill(tint.opacity(0.18))
-                    )
-            }
-
-            slider()
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color.black.opacity(0.18))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.05))
-                )
-        )
-    }
-
-    private func startDSP() {
-        guard !isStartingDSP else { return }
-
-        isStartingDSP = true
-        Task {
-            defer { isStartingDSP = false }
-
-            do {
-                let started = try dspManager.startDSP()
-                refreshDSPRunningState()
-
-                if started {
-                    if let routingMessage = dspManager.lastRoutingMessage, !routingMessage.isEmpty {
-                        statusMessage = "CamillaDSP started. \(routingMessage)"
-                    } else {
-                        statusMessage = "CamillaDSP started"
-                    }
-                    lastReportedExitStatus = nil
-                } else {
-                    statusMessage = "CamillaDSP already running"
-                }
-            } catch {
-                refreshDSPRunningState()
-                statusMessage = "Failed to start DSP: \(error.localizedDescription)"
+        let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.refresh()
             }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
     }
 
-    private func stopDSP() {
-        let didStop = dspManager.stopDSP()
-        if camilla.isConnected {
-            camilla.disconnect()
-        }
-
-        refreshDSPRunningState()
-        let baseMessage = didStop ? "CamillaDSP stopped" : "CamillaDSP was not running"
-        if let routingMessage = dspManager.lastRoutingMessage, !routingMessage.isEmpty {
-            statusMessage = "\(baseMessage). \(routingMessage)"
-        } else {
-            statusMessage = baseMessage
-        }
+    func stop() {
+        timer?.invalidate()
+        timer = nil
     }
 
-    private func connect() {
-        guard !isConnecting else { return }
-        isConnecting = true
+    func refresh() {
+        let wasRunning = isRunning
+        let currentRunning = dspManager.isDSPRunning || dspManager.isWebSocketReachable(timeout: 0.05)
 
-        Task {
-            defer { isConnecting = false }
+        if currentRunning != isRunning {
+            isRunning = currentRunning
+        }
 
-            do {
-                let routingMessage = dspManager.ensureProcessingRoute()
-                if !dspManager.isDSPRunning && !dspManager.isWebSocketReachable(timeout: 0.2) {
-                    do {
-                        _ = try dspManager.startDSP()
-                        refreshDSPRunningState()
-                        try await Task.sleep(for: .milliseconds(350))
-                    } catch {
-                        if !dspManager.isWebSocketReachable(timeout: 0.2) {
-                            throw error
-                        }
-                        refreshDSPRunningState()
-                        statusMessage = "Using existing CamillaDSP instance"
-                    }
-                } else {
-                    refreshDSPRunningState()
-                }
+        if wasRunning && !currentRunning,
+           let exitStatus = dspManager.lastExitStatus,
+           exitStatus != lastReportedExitStatus {
+            lastReportedExitStatus = exitStatus
+            onUnexpectedExit(exitStatus)
+        }
 
-                try await camilla.connect(urlString: websocketURL)
-                try await camilla.refreshState()
-                volumeDB = camilla.currentVolume
-                if let routingMessage, !routingMessage.isEmpty {
-                    statusMessage = "Connected to CamillaDSP. \(routingMessage)"
-                } else {
-                    statusMessage = "Connected to CamillaDSP"
-                }
-            } catch {
-                refreshDSPRunningState()
-                statusMessage = "Connection failed: \(error.localizedDescription)"
-            }
+        if currentRunning {
+            lastReportedExitStatus = nil
         }
     }
 
-    private func disconnect() {
-        camilla.disconnect()
-        refreshDSPRunningState()
-        statusMessage = "Disconnected"
-    }
-
-    private func loadProfiles() {
-        do {
-            profiles = try profileStore.listProfiles()
-            if !profiles.contains(where: { $0.name == selectedProfileName }) {
-                selectedProfileName = profiles.first?.name ?? ""
-            }
-
-            if let flatProfile = profiles.first(where: { $0.name == "flat.yml" }) {
-                lastDryProfileName = flatProfile.name
-            } else if !lastDryProfileName.isEmpty,
-                      !profiles.contains(where: { $0.name == lastDryProfileName }) {
-                lastDryProfileName = ""
-            }
-
-            if profiles.isEmpty {
-                statusMessage = "No profiles found in dsp/profiles"
-            }
-        } catch {
-            profiles = []
-            selectedProfileName = ""
-            statusMessage = """
-            Failed to load profiles: \(error.localizedDescription)
-            Path: \(profileStore.currentProfilesDirectoryURL().path)
-            """
-        }
-    }
-
-    private func applyProfile() {
-        guard !selectedProfileName.isEmpty else {
-            statusMessage = "Pick a profile first"
-            return
-        }
-
-        guard let selectedProfile = profiles.first(where: { $0.name == selectedProfileName }) else {
-            statusMessage = "Selected profile is no longer available. Refresh and try again."
-            return
-        }
-
-        performProfileApply(
-            selectedProfile,
-            statusPrefix: "Applied profile",
-            updateDryBaseline: !isReverbProfileName(selectedProfile.name)
-        )
-    }
-
-    private func applyReverb() {
-        guard camilla.isConnected else {
-            statusMessage = "Connect to CamillaDSP first"
-            return
-        }
-
-        guard let profile = resolvedReverbProfile() else {
-            statusMessage = "No reverb profile found for \(reverbStyle.rawValue) (\(reverbQuality.rawValue))"
-            return
-        }
-
-        selectedProfileName = profile.name
-        performReverbApply(profile)
-    }
-
-    private func bypassReverb() {
-        guard camilla.isConnected else {
-            statusMessage = "Connect to CamillaDSP first"
-            return
-        }
-
-        let fallbackNames = [lastDryProfileName, "flat.yml", "laptop_speakers.yml"]
-        guard let profile = fallbackNames
-            .compactMap({ name in profiles.first(where: { $0.name == name }) })
-            .first else {
-            statusMessage = "No dry profile found. Select a profile and click Apply Profile."
-            return
-        }
-
-        selectedProfileName = profile.name
-        performProfileApply(profile, statusPrefix: "Bypassed reverb with", updateDryBaseline: true)
-    }
-
-    private func performProfileApply(
-        _ profile: AudioProfile,
-        statusPrefix: String,
-        updateDryBaseline: Bool
-    ) {
-        Task {
-            do {
-                let configText = try String(contentsOf: profile.fileURL, encoding: .utf8)
-                try await camilla.applyProfile(configText: configText)
-                if updateDryBaseline && !isReverbProfileName(profile.name) {
-                    lastDryProfileName = profile.name
-                }
-                statusMessage = "\(statusPrefix): \(profile.name)"
-            } catch {
-                statusMessage = "Profile apply failed: \(error.localizedDescription)"
-            }
-        }
-    }
-
-    private func performReverbApply(_ profile: AudioProfile) {
-        Task {
-            do {
-                let profileText = try String(contentsOf: profile.fileURL, encoding: .utf8)
-                let mixedConfig = try reverbMixRenderer.renderMixedConfig(
-                    profileURL: profile.fileURL,
-                    profileText: profileText,
-                    wetPercent: reverbWetPercent,
-                    dryPercent: reverbDryPercent
-                )
-                try await camilla.applyProfile(configText: mixedConfig)
-                statusMessage = """
-                Applied reverb: \(profile.name) \
-                (Wet \(Int(reverbWetPercent.rounded()))%, Dry \(Int(reverbDryPercent.rounded()))%)
-                """
-            } catch {
-                statusMessage = "Reverb apply failed: \(error.localizedDescription)"
-            }
-        }
-    }
-
-    private func resolvedReverbProfile() -> AudioProfile? {
-        let preferredNames = preferredReverbProfileNames(for: reverbStyle, quality: reverbQuality)
-        return preferredNames.compactMap { name in
-            profiles.first(where: { $0.name == name })
-        }.first
-    }
-
-    private func preferredReverbProfileNames(
-        for style: ReverbStyle,
-        quality: ReverbQuality
-    ) -> [String] {
-        let standardName = "\(style.profileStem).yml"
-        switch quality {
-        case .standard:
-            return [standardName]
-        case .high:
-            return ["\(style.profileStem)_hq.yml", standardName]
-        }
-    }
-
-    private func isReverbProfileName(_ name: String) -> Bool {
-        let normalized = name.lowercased()
-        return normalized.contains("small_room")
-            || normalized.contains("vocal_plate")
-            || normalized.contains("large_hall")
-    }
-
-    private func handleVolumeEditing(_ editing: Bool) {
-        if !editing {
-            sendVolume()
-        }
-    }
-
-    private func sendVolume() {
-        let value = volumeDB
-        Task {
-            do {
-                try await camilla.setVolume(value)
-                statusMessage = "Volume set to \(value.formatted(.number.precision(.fractionLength(1)))) dB"
-            } catch {
-                statusMessage = "Volume update failed: \(error.localizedDescription)"
-            }
-        }
-    }
-
-    private func toggleMute() {
-        Task {
-            do {
-                let muted = try await camilla.toggleMute()
-                statusMessage = muted ? "Muted" : "Unmuted"
-            } catch {
-                statusMessage = "Mute toggle failed: \(error.localizedDescription)"
-            }
-        }
-    }
-
-    private func refreshDSPRunningState() {
-        isDSPRunning = dspManager.isDSPRunning || dspManager.isWebSocketReachable(timeout: 0.05)
-    }
-
-    private func syncRuntimePreferences() {
-        dspManager.applyPreferences()
-        refreshDSPRunningState()
-    }
-
-    private func attemptAutoConnectIfNeeded() {
-        guard autoConnectOnLaunch, !didAttemptAutoConnect else {
-            return
-        }
-
-        didAttemptAutoConnect = true
-        connect()
+    deinit {
+        timer?.invalidate()
     }
 }
 
@@ -1061,6 +1284,7 @@ private struct StatusBadge: View {
                         .strokeBorder(Color.white.opacity(0.06))
                 )
         )
+        .animation(.spring(response: 0.42, dampingFraction: 0.86), value: value)
     }
 }
 
@@ -1103,6 +1327,41 @@ private struct MetricTile: View {
     }
 }
 
+private struct SectionCard<Content: View>: View {
+    let title: String
+    let subtitle: String
+    let symbol: String
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top, spacing: 14) {
+                Image(systemName: symbol)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(WaveDaemonPalette.brandAmber)
+                    .frame(width: 34, height: 34)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(Color.black.opacity(0.18))
+                    )
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.system(size: 22, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.95))
+
+                    Text(subtitle)
+                        .font(.system(size: 13, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.58))
+                }
+            }
+
+            content
+        }
+        .panelCard(fill: WaveDaemonPalette.panelFill)
+    }
+}
+
 private struct LabeledPicker<Content: View>: View {
     let title: String
     @ViewBuilder let content: Content
@@ -1126,6 +1385,46 @@ private struct LabeledPicker<Content: View>: View {
                         )
                 )
         }
+    }
+}
+
+private struct SliderCard<SliderContent: View>: View {
+    let title: String
+    let valueText: String
+    let tint: Color
+    @ViewBuilder let slider: SliderContent
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text(title)
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.82))
+
+                Spacer()
+
+                Text(valueText)
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(tint.opacity(0.18))
+                    )
+            }
+
+            slider
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color.black.opacity(0.18))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.05))
+                )
+        )
     }
 }
 
@@ -1162,18 +1461,8 @@ private struct ConsoleSlider: View {
                     .fill(Color.white.opacity(isEnabled ? 0.12 : 0.06))
                     .frame(height: trackHeight)
 
-                HStack(spacing: 0) {
-                    ForEach(0..<30, id: \.self) { index in
-                        Capsule(style: .continuous)
-                            .fill(index.isMultiple(of: 3) ? Color.white.opacity(0.16) : Color.white.opacity(0.08))
-                            .frame(width: 2, height: index.isMultiple(of: 3) ? 4 : 3)
-                        if index < 29 {
-                            Spacer(minLength: 0)
-                        }
-                    }
-                }
-                .padding(.horizontal, 12)
-                .frame(height: 24)
+                SliderTickMarks()
+                    .frame(height: 24)
 
                 Capsule(style: .continuous)
                     .fill(
@@ -1277,6 +1566,42 @@ private struct ConsoleSlider: View {
         let steps = ((clamped - range.lowerBound) / step).rounded()
         let quantized = range.lowerBound + (steps * step)
         return min(max(quantized, range.lowerBound), range.upperBound)
+    }
+}
+
+private struct SliderTickMarks: View {
+    private let tickCount = 30
+    private let horizontalInset: CGFloat = 12
+
+    var body: some View {
+        Canvas { context, size in
+            let usableWidth = max(size.width - (horizontalInset * 2), 1)
+            var minorTicks = Path()
+            var majorTicks = Path()
+
+            for index in 0..<tickCount {
+                let progress = tickCount == 1 ? 0 : CGFloat(index) / CGFloat(tickCount - 1)
+                let x = horizontalInset + (usableWidth * progress)
+                let height: CGFloat = index.isMultiple(of: 3) ? 4 : 3
+                let rect = CGRect(
+                    x: x - 1,
+                    y: (size.height - height) / 2,
+                    width: 2,
+                    height: height
+                )
+                let path = Path(roundedRect: rect, cornerSize: CGSize(width: 1, height: 1))
+
+                if index.isMultiple(of: 3) {
+                    majorTicks.addPath(path)
+                } else {
+                    minorTicks.addPath(path)
+                }
+            }
+
+            context.fill(minorTicks, with: .color(Color.white.opacity(0.08)))
+            context.fill(majorTicks, with: .color(Color.white.opacity(0.16)))
+        }
+        .allowsHitTesting(false)
     }
 }
 

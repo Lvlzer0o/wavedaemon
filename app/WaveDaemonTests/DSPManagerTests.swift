@@ -116,6 +116,43 @@ final class DSPManagerTests: XCTestCase {
         }
         XCTAssertEqual(mockProcess.terminateCallCount, 1)
     }
+
+    func testRuntimeEndpointOverridesPersistedEndpointForSessionOnlyPreflight() throws {
+        var probes: [(host: String, port: Int)] = []
+        let manager = DSPManager(
+            processFactory: { MockDSPProcess() },
+            portProbe: { host, port, _ in
+                probes.append((host: host, port: port))
+                return false
+            },
+            executableURL: URL(fileURLWithPath: "/usr/bin/env"),
+            configURL: URL(fileURLWithPath: "/tmp/config.yml"),
+            runtimeDirectoryURL: URL(fileURLWithPath: "/tmp"),
+            validatePaths: false,
+            autoRouteSystemOutput: false
+        )
+
+        manager.applyPreferences(
+            WaveDaemonPreferencesSnapshot(
+                preferredWebSocketURL: "ws://127.0.0.1:1234",
+                autoRouteSystemOutput: false,
+                processingOutputDevice: "System DSP Output",
+                autoConnectOnLaunch: false
+            )
+        )
+
+        _ = manager.isWebSocketReachable(timeout: 0.01)
+
+        let sessionOnlyInput = "ws://127.0.0.1:5678?token=abc"
+        let connectionURL = try XCTUnwrap(WaveDaemonPreferences.normalizedWebSocketURL(from: sessionOnlyInput))
+        let endpoint = try XCTUnwrap(WaveDaemonPreferences.parseWebSocketEndpoint(from: connectionURL))
+        manager.setRuntimeWebSocketEndpoint(host: endpoint.host, port: endpoint.port)
+
+        _ = manager.isWebSocketReachable(timeout: 0.01)
+
+        XCTAssertEqual(probes.map(\.host), ["127.0.0.1", "127.0.0.1"])
+        XCTAssertEqual(probes.map(\.port), [1234, 5678])
+    }
 }
 
 private final class MockDSPProcess: DSPProcess {

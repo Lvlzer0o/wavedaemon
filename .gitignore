@@ -10,6 +10,9 @@
 *.pid
 *.state
 .runtime/
+output/
+tmp/
+security_best_practices_report.md
 ownership-map-out/
 ownership-map-config/
 
