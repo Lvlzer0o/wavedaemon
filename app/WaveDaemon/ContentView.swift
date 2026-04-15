@@ -242,6 +242,12 @@ struct ContentView: View {
                     ?? websocketURLInput.trimmingCharacters(in: .whitespacesAndNewlines)
                 let storageBehavior = WaveDaemonPreferences.webSocketURLStorageBehavior(from: websocketURLInput)
                 let managesLocalDSP = shouldManageLocalDSP(for: connectionURL)
+
+                if managesLocalDSP,
+                   let endpoint = WaveDaemonPreferences.parseWebSocketEndpoint(from: connectionURL) {
+                    dspManager.setRuntimeWebSocketEndpoint(host: endpoint.host, port: endpoint.port)
+                }
+
                 let routingMessage = managesLocalDSP ? dspManager.ensureProcessingRoute() : nil
 
                 if managesLocalDSP && !dspManager.isDSPRunning && !dspManager.isWebSocketReachable(timeout: 0.2) {
