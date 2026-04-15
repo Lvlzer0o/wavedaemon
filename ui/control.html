@@ -321,11 +321,31 @@
       connTextEl.textContent = connected ? "Connected" : "Disconnected";
     }
 
-    function wsUrlFromQueryOrStorage() {
+    function redactWebSocketURL(urlString) {
+      try {
+        const candidate = urlString.includes("://") ? urlString : `ws://${urlString}`;
+        const parsed = new URL(candidate);
+        parsed.username = "";
+        parsed.password = "";
+        parsed.search = "";
+        parsed.hash = "";
+        return parsed.toString();
+      } catch (_) {
+        return "WebSocket endpoint";
+      }
+    }
+
+    function wsUrlFromQueryOrDefault() {
       const params = new URLSearchParams(window.location.search);
       const queryWs = params.get("ws");
-      if (queryWs) return queryWs;
-      return localStorage.getItem("camilla_ws_url") || "ws://127.0.0.1:1234";
+      if (queryWs) {
+        params.delete("ws");
+        const cleanQuery = params.toString();
+        const cleanUrl = `${window.location.pathname}${cleanQuery ? `?${cleanQuery}` : ""}${window.location.hash}`;
+        window.history.replaceState({}, document.title, cleanUrl);
+        return queryWs;
+      }
+      return "ws://127.0.0.1:1234";
     }
 
     function commandName(command) {
@@ -762,13 +782,12 @@
     function connect() {
       const url = wsUrlEl.value.trim();
       if (!url) return;
-      localStorage.setItem("camilla_ws_url", url);
       if (ws && ws.readyState <= WebSocket.OPEN) ws.close();
       ws = new WebSocket(url);
 
       ws.addEventListener("open", async () => {
         setConn(true);
-        log(`connected: ${url}`);
+        log(`connected: ${redactWebSocketURL(url)}`);
         try {
           await request({ SetUpdateInterval: 500 });
         } catch (err) {
@@ -932,7 +951,7 @@
     buildEqControls();
     setAllEqBands(0);
     setEqState("Idle");
-    wsUrlEl.value = wsUrlFromQueryOrStorage();
+    wsUrlEl.value = wsUrlFromQueryOrDefault();
     setConn(false);
   </script>
 </body>

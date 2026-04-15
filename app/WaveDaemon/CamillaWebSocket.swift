@@ -11,8 +11,8 @@ enum CamillaWebSocketError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case let .invalidURL(value):
-            return "Invalid WebSocket URL: \(value)"
+        case .invalidURL:
+            return "Invalid WebSocket URL"
         case .notConnected:
             return "CamillaDSP is not connected"
         case let .timeout(command):

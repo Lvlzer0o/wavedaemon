@@ -10,6 +10,7 @@ struct SettingsView: View {
     private var processingOutputDevice = WaveDaemonPreferences.defaultProcessingOutputDevice()
     @AppStorage(WaveDaemonPreferences.Keys.autoConnectOnLaunch)
     private var autoConnectOnLaunch = false
+    @State private var preferredWebSocketURLInput = WaveDaemonPreferences.currentWebSocketURL()
 
     private let brandCyan = Color(red: 0.23, green: 0.73, blue: 0.94)
     private let brandAmber = Color(red: 0.98, green: 0.72, blue: 0.28)
@@ -17,8 +18,48 @@ struct SettingsView: View {
     private let shellTop = Color(red: 0.05, green: 0.07, blue: 0.10)
     private let shellBottom = Color(red: 0.09, green: 0.11, blue: 0.16)
 
+    private var endpointStorageBehavior: WaveDaemonPreferences.WebSocketURLStorageBehavior {
+        WaveDaemonPreferences.webSocketURLStorageBehavior(from: preferredWebSocketURLInput)
+    }
+
     private var endpointIsValid: Bool {
-        WaveDaemonPreferences.parseWebSocketEndpoint(from: preferredWebSocketURL) != nil
+        if case .invalid = endpointStorageBehavior {
+            return false
+        }
+        return true
+    }
+
+    private var endpointStatusText: String {
+        switch endpointStorageBehavior {
+        case .invalid:
+            return "Check URL"
+        case .sessionOnly(_):
+            return "Session Only"
+        case .persistent(_):
+            return "Saved"
+        }
+    }
+
+    private var endpointStatusTint: Color {
+        switch endpointStorageBehavior {
+        case .invalid:
+            return brandAmber
+        case .sessionOnly(_):
+            return brandAmber
+        case .persistent(_):
+            return brandEmerald
+        }
+    }
+
+    private var endpointHelperText: String? {
+        switch endpointStorageBehavior {
+        case .invalid:
+            return "Enter a valid ws:// or wss:// endpoint."
+        case .sessionOnly(_):
+            return "URLs with credentials, query strings, or fragments work for the current session only and are not saved to disk."
+        case .persistent(_):
+            return nil
+        }
     }
 
     private var effectiveConfigPath: String {
@@ -61,15 +102,22 @@ struct SettingsView: View {
         }
         .frame(minWidth: 760, minHeight: 700)
         .onAppear {
+            reconcileStoredWebSocketPreference()
             DSPManager.shared.applyPreferences()
         }
-        .onChange(of: preferredWebSocketURL) { _ in
+        .onChange(of: preferredWebSocketURL) {
+            if preferredWebSocketURLInput != preferredWebSocketURL {
+                preferredWebSocketURLInput = preferredWebSocketURL
+            }
             DSPManager.shared.applyPreferences()
         }
-        .onChange(of: autoRouteSystemOutput) { _ in
+        .onChange(of: preferredWebSocketURLInput) {
+            persistPreferredWebSocketURLInputIfSafe()
+        }
+        .onChange(of: autoRouteSystemOutput) {
             DSPManager.shared.applyPreferences()
         }
-        .onChange(of: processingOutputDevice) { _ in
+        .onChange(of: processingOutputDevice) {
             DSPManager.shared.applyPreferences()
         }
     }
@@ -91,8 +139,8 @@ struct SettingsView: View {
 
                 SettingsBadge(
                     title: "ENDPOINT",
-                    value: endpointIsValid ? "Valid" : "Check URL",
-                    tint: endpointIsValid ? brandEmerald : brandAmber
+                    value: endpointStatusText,
+                    tint: endpointStatusTint
                 )
             }
 
@@ -124,13 +172,19 @@ struct SettingsView: View {
         ) {
             VStack(alignment: .leading, spacing: 18) {
                 settingsField(title: "Preferred WebSocket URL") {
-                    TextField("ws://127.0.0.1:1234", text: $preferredWebSocketURL)
+                    TextField("ws://127.0.0.1:1234", text: $preferredWebSocketURLInput)
                         .textFieldStyle(.plain)
                         .font(.system(size: 15, weight: .medium, design: .rounded))
                         .foregroundStyle(.white.opacity(0.92))
                         .padding(.horizontal, 16)
                         .padding(.vertical, 12)
                         .background(fieldBackground)
+                }
+
+                if let endpointHelperText {
+                    Text(endpointHelperText)
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundStyle(endpointIsValid ? brandAmber : Color.white.opacity(0.56))
                 }
 
                 Toggle(isOn: $autoConnectOnLaunch) {
@@ -316,7 +370,36 @@ struct SettingsView: View {
 
     private func resetToDefaults() {
         WaveDaemonPreferences.resetToDefaults()
+        reconcileStoredWebSocketPreference()
         DSPManager.shared.applyPreferences()
+    }
+
+    private func reconcileStoredWebSocketPreference() {
+        let persistedURL = WaveDaemonPreferences.currentWebSocketURL()
+
+        if preferredWebSocketURL != persistedURL {
+            preferredWebSocketURL = persistedURL
+        }
+
+        if preferredWebSocketURLInput != persistedURL {
+            preferredWebSocketURLInput = persistedURL
+        }
+    }
+
+    private func persistPreferredWebSocketURLInputIfSafe() {
+        guard let persistedURL = WaveDaemonPreferences.persistableWebSocketURL(
+            from: preferredWebSocketURLInput
+        ) else {
+            return
+        }
+
+        if preferredWebSocketURL != persistedURL {
+            preferredWebSocketURL = persistedURL
+        }
+
+        if preferredWebSocketURLInput != persistedURL {
+            preferredWebSocketURLInput = persistedURL
+        }
     }
 
     private func openFolder(_ path: String) {

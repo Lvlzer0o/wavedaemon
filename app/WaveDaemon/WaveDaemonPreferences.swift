@@ -15,6 +15,12 @@ enum WaveDaemonPreferences {
         static let autoConnectOnLaunch = "wavedaemon.autoConnectOnLaunch"
     }
 
+    enum WebSocketURLStorageBehavior: Equatable {
+        case invalid
+        case sessionOnly(String)
+        case persistent(String)
+    }
+
     static func load(
         userDefaults: UserDefaults = .standard,
         environment: [String: String] = ProcessInfo.processInfo.environment
@@ -46,10 +52,81 @@ enum WaveDaemonPreferences {
         if let value = userDefaults.string(forKey: Keys.preferredWebSocketURL)?
             .trimmingCharacters(in: .whitespacesAndNewlines),
            !value.isEmpty {
-            return value
+            switch webSocketURLStorageBehavior(from: value, environment: environment) {
+            case let .persistent(normalized):
+                if normalized != value {
+                    userDefaults.set(normalized, forKey: Keys.preferredWebSocketURL)
+                }
+                return normalized
+            case .invalid, .sessionOnly(_):
+                userDefaults.removeObject(forKey: Keys.preferredWebSocketURL)
+            }
         }
 
         return defaultWebSocketURLString(environment: environment)
+    }
+
+    static func normalizedWebSocketURL(
+        from urlString: String,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> String? {
+        switch webSocketURLStorageBehavior(from: urlString, environment: environment) {
+        case .invalid:
+            return nil
+        case let .sessionOnly(normalized), let .persistent(normalized):
+            return normalized
+        }
+    }
+
+    static func persistableWebSocketURL(
+        from urlString: String,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> String? {
+        guard case let .persistent(normalized) = webSocketURLStorageBehavior(
+            from: urlString,
+            environment: environment
+        ) else {
+            return nil
+        }
+
+        return normalized
+    }
+
+    @discardableResult
+    static func persistPreferredWebSocketURLIfSafe(
+        _ urlString: String,
+        userDefaults: UserDefaults = .standard,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Bool {
+        guard let normalized = persistableWebSocketURL(from: urlString, environment: environment) else {
+            return false
+        }
+
+        userDefaults.set(normalized, forKey: Keys.preferredWebSocketURL)
+        return true
+    }
+
+    static func webSocketURLStorageBehavior(
+        from urlString: String,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> WebSocketURLStorageBehavior {
+        guard var components = normalizedWebSocketComponents(from: urlString, environment: environment) else {
+            return .invalid
+        }
+
+        if components.port == nil {
+            components.port = defaultWebSocketPort(environment: environment)
+        }
+
+        guard let normalized = components.string else {
+            return .invalid
+        }
+
+        if hasSensitiveWebSocketURLComponents(components) {
+            return .sessionOnly(normalized)
+        }
+
+        return .persistent(normalized)
     }
 
     static func defaultAutoRouteSystemOutput(
@@ -117,32 +194,13 @@ enum WaveDaemonPreferences {
     }
 
     static func parseWebSocketEndpoint(from urlString: String) -> (host: String, port: Int)? {
-        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            return nil
-        }
-
-        let candidate = trimmed.contains("://") ? trimmed : "ws://\(trimmed)"
-        guard var components = URLComponents(string: candidate) else {
-            return nil
-        }
-
-        if components.scheme == "http" {
-            components.scheme = "ws"
-        } else if components.scheme == "https" {
-            components.scheme = "wss"
-        }
-
-        guard let host = components.host, !host.isEmpty else {
+        guard let components = normalizedWebSocketComponents(from: urlString) else {
             return nil
         }
 
         let port = components.port ?? defaultWebSocketPort()
-        guard (1...65_535).contains(port) else {
-            return nil
-        }
 
-        return (host, port)
+        return (components.host ?? "", port)
     }
 
     static func resetToDefaults(userDefaults: UserDefaults = .standard) {
@@ -168,5 +226,54 @@ enum WaveDaemonPreferences {
             return 1234
         }
         return value
+    }
+
+    private static func normalizedWebSocketComponents(
+        from urlString: String,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> URLComponents? {
+        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+
+        let candidate = trimmed.contains("://") ? trimmed : "ws://\(trimmed)"
+        guard var components = URLComponents(string: candidate) else {
+            return nil
+        }
+
+        switch components.scheme?.lowercased() {
+        case "http":
+            components.scheme = "ws"
+        case "https":
+            components.scheme = "wss"
+        case "ws", "wss":
+            break
+        default:
+            return nil
+        }
+
+        guard let host = components.host, !host.isEmpty else {
+            return nil
+        }
+
+        if let port = components.port, !(1...65_535).contains(port) {
+            return nil
+        }
+
+        if components.port == nil {
+            components.port = defaultWebSocketPort(environment: environment)
+        }
+
+        components.host = host
+        return components
+    }
+
+    private static func hasSensitiveWebSocketURLComponents(_ components: URLComponents) -> Bool {
+        let hasCredentials = (components.user?.isEmpty == false) || (components.password?.isEmpty == false)
+        let hasQuery = components.percentEncodedQuery?.isEmpty == false
+        let hasFragment = components.percentEncodedFragment?.isEmpty == false
+
+        return hasCredentials || hasQuery || hasFragment
     }
 }
