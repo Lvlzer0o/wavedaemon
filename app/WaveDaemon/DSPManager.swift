@@ -190,8 +190,15 @@ final class DSPManager {
 
         if let nativeProcess = process as? Process {
             nativeProcess.currentDirectoryURL = workingDirectoryURL
-            nativeProcess.terminationHandler = { terminatedProcess in
+            nativeProcess.terminationHandler = { [weak self] terminatedProcess in
                 let status = terminatedProcess.terminationStatus
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    if let activeProcess = self.process as? Process, activeProcess === terminatedProcess {
+                        self.process = nil
+                    }
+                    self.lastExitStatus = status
+                }
                 print("camilladsp exited: \(status)")
             }
         }
@@ -658,8 +665,11 @@ final class DSPManager {
 
     private func probeHostForDaemonBindAddress(_ address: String) -> String {
         let normalized = address.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if normalized == "0.0.0.0" || normalized == "::" || normalized == "*" {
+        if normalized == "0.0.0.0" || normalized == "*" {
             return "127.0.0.1"
+        }
+        if normalized == "::" {
+            return "::1"
         }
         return address
     }

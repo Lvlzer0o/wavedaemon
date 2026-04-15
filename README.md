@@ -148,13 +148,16 @@ Run health checks before or after setup:
 Checks include:
 
 - dependencies (`camilladsp`, `SwitchAudioSource`, `websocat`, `jq`, `python3`)
+- effective WebSocket topology (daemon bind, local probe, client connect URL)
 - required audio devices (`BlackHole 2ch`, aggregate, multi-output/fallback)
 - sample rates (target default: `48000 Hz`)
-- port availability (`1234`, `9137`)
+- port availability (effective daemon bind port, `9137`)
 - config validation (`camilladsp --check`)
 - runtime status (CamillaDSP, keepalive, UI server)
 
 ## Validate
+
+Adjust host and port to match your deployment. If the daemon binds to `0.0.0.0` or `*`, use `127.0.0.1` for local readiness checks. If it binds to `::`, use `::1`.
 
 ```bash
 lsof -nP -iTCP:1234 -sTCP:LISTEN

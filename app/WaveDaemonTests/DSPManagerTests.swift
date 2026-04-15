@@ -3,7 +3,11 @@ import XCTest
 
 final class DSPManagerTests: XCTestCase {
     func testWildcardBindAddressesProbeLoopback() throws {
-        let wildcardCases = ["0.0.0.0", "::", "*"]
+        let wildcardCases: [(bind: String, expectedProbeHost: String)] = [
+            ("0.0.0.0", "127.0.0.1"),
+            ("::", "::1"),
+            ("*", "127.0.0.1"),
+        ]
 
         for wildcard in wildcardCases {
             let mockProcess = MockDSPProcess()
@@ -19,15 +23,15 @@ final class DSPManagerTests: XCTestCase {
                 executableURL: URL(fileURLWithPath: "/usr/bin/env"),
                 configURL: URL(fileURLWithPath: "/tmp/config.yml"),
                 runtimeDirectoryURL: URL(fileURLWithPath: "/tmp"),
-                daemonBindAddress: wildcard,
+                daemonBindAddress: wildcard.bind,
                 daemonBindPort: 4321,
                 validatePaths: false,
                 autoRouteSystemOutput: false
             )
 
             let didStart = try manager.startDSP()
-            XCTAssertTrue(didStart, "Expected startup to succeed for wildcard \(wildcard)")
-            XCTAssertTrue(probedHosts.allSatisfy { $0 == "127.0.0.1" })
+            XCTAssertTrue(didStart, "Expected startup to succeed for wildcard \(wildcard.bind)")
+            XCTAssertTrue(probedHosts.allSatisfy { $0 == wildcard.expectedProbeHost })
             XCTAssertTrue(probedPorts.allSatisfy { $0 == 4321 })
             _ = manager.stopDSP()
         }
@@ -143,9 +147,9 @@ final class DSPManagerTests: XCTestCase {
             executableURL: URL(fileURLWithPath: "/usr/bin/env"),
             configURL: URL(fileURLWithPath: "/tmp/config.yml"),
             runtimeDirectoryURL: URL(fileURLWithPath: "/tmp"),
-            startupTimeout: 0.2,
             daemonBindAddress: "127.0.0.1",
             daemonBindPort: 1234,
+            startupTimeout: 0.2,
             validatePaths: false,
             autoRouteSystemOutput: false
         )

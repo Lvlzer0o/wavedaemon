@@ -10,6 +10,11 @@ STOP_SCRIPT="${SCRIPT_DIR}/stop-audio-dsp.sh"
 KEEPALIVE_SCRIPT="${SCRIPT_DIR}/audio-stream-keepalive.sh"
 AUTO_KEEPALIVE="${CAMILLADSP_AUTO_KEEPALIVE:-0}"
 
+cleanup_previous_output_state() {
+  rm -f "$PREVIOUS_OUTPUT_STATEFILE"
+}
+trap cleanup_previous_output_state EXIT
+
 if [[ -z "$SYSTEM_OUTPUT_DEVICE" && -f "$PREVIOUS_OUTPUT_STATEFILE" ]]; then
   SYSTEM_OUTPUT_DEVICE="$(cat "$PREVIOUS_OUTPUT_STATEFILE" 2>/dev/null || true)"
 fi
@@ -34,5 +39,3 @@ if command -v SwitchAudioSource >/dev/null 2>&1; then
 else
   echo "SwitchAudioSource is not installed; output device unchanged."
 fi
-
-rm -f "$PREVIOUS_OUTPUT_STATEFILE"

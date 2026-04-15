@@ -89,6 +89,11 @@ final class CamillaWebSocket: ObservableObject {
         let continuation: CheckedContinuation<[String: Any], Error>
     }
 
+    private struct CommandLockWaiter {
+        let id: UUID
+        let continuation: CheckedContinuation<Void, Error>
+    }
+
     private let session: URLSession
     private var socketTask: URLSessionWebSocketTask?
     private var receiveTask: Task<Void, Never>?
@@ -96,7 +101,7 @@ final class CamillaWebSocket: ObservableObject {
     // CamillaDSP replies do not include correlation IDs, so same-command requests must be
     // serialized to avoid ambiguous FIFO matching when replies arrive out of order.
     private var commandLocks: Set<String> = []
-    private var commandLockWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
+    private var commandLockWaiters: [String: [CommandLockWaiter]] = [:]
 
     init(session: URLSession = .shared) {
         self.session = session
@@ -159,7 +164,7 @@ final class CamillaWebSocket: ObservableObject {
         let requestID = UUID()
         let responseKey = command.responseKey
         let payload = try command.encodedMessage()
-        await acquireCommandLock(for: responseKey)
+        try await acquireCommandLock(for: responseKey)
         defer { releaseCommandLock(for: responseKey) }
 
         let waitForReply = Task<[String: Any], Error> { [weak self] in
@@ -346,16 +351,28 @@ final class CamillaWebSocket: ObservableObject {
         pending.removeAll()
     }
 
-    private func acquireCommandLock(for key: String) async {
+    private func acquireCommandLock(for key: String) async throws {
         if !commandLocks.contains(key) {
             commandLocks.insert(key)
             return
         }
 
-        await withCheckedContinuation { continuation in
-            var queue = commandLockWaiters[key] ?? []
-            queue.append(continuation)
-            commandLockWaiters[key] = queue
+        let waiterID = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                if Task.isCancelled {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+
+                var queue = commandLockWaiters[key] ?? []
+                queue.append(CommandLockWaiter(id: waiterID, continuation: continuation))
+                commandLockWaiters[key] = queue
+            }
+        } onCancel: { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.cancelCommandLockWaiter(id: waiterID, for: key)
+            }
         }
     }
 
@@ -372,6 +389,23 @@ final class CamillaWebSocket: ObservableObject {
         } else {
             commandLockWaiters[key] = queue
         }
-        waiter.resume()
+        waiter.continuation.resume(returning: ())
+    }
+
+    private func cancelCommandLockWaiter(id: UUID, for key: String) {
+        guard var queue = commandLockWaiters[key],
+              let index = queue.firstIndex(where: { $0.id == id })
+        else {
+            return
+        }
+
+        let waiter = queue.remove(at: index)
+        if queue.isEmpty {
+            commandLockWaiters.removeValue(forKey: key)
+        } else {
+            commandLockWaiters[key] = queue
+        }
+
+        waiter.continuation.resume(throwing: CancellationError())
     }
 }
