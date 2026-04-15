@@ -16,6 +16,7 @@ enum DSPManagerError: LocalizedError {
     case configNotFound(String)
     case processExitedImmediately(Int32?, String?)
     case webSocketNeverBecameReady(host: String, port: Int, logTail: String?)
+    case routingFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -34,6 +35,8 @@ enum DSPManagerError: LocalizedError {
         case let .webSocketNeverBecameReady(host, port, logTail):
             let baseMessage = "CamillaDSP started but ws://\(host):\(port) never became ready"
             return Self.withOptionalLogTail(baseMessage, logTail: logTail)
+        case let .routingFailed(message):
+            return message
         }
     }
 
@@ -60,8 +63,8 @@ final class DSPManager {
     private let runtimeDirectoryURL: URL
     private let logFileURL: URL
     private let stateFileURL: URL
-    private var wsAddress: String
-    private var wsPort: Int
+    private var daemonBindAddress: String
+    private var daemonBindPort: Int
     private let logLevel: String
     private let startupTimeout: TimeInterval
     private let validatePaths: Bool
@@ -84,8 +87,8 @@ final class DSPManager {
         runtimeDirectoryURL: URL = DSPManager.defaultRuntimeDirectoryURL(),
         logFileURL: URL = DSPManager.defaultLogFileURL(),
         stateFileURL: URL = DSPManager.defaultStateFileURL(),
-        wsAddress: String = DSPManager.defaultWebSocketAddress(),
-        wsPort: Int = DSPManager.defaultWebSocketPort(),
+        daemonBindAddress: String = DSPManager.defaultDaemonBindAddress(),
+        daemonBindPort: Int = DSPManager.defaultDaemonBindPort(),
         logLevel: String = "info",
         startupTimeout: TimeInterval = 3.0,
         validatePaths: Bool = true,
@@ -102,8 +105,8 @@ final class DSPManager {
         self.runtimeDirectoryURL = runtimeDirectoryURL
         self.logFileURL = logFileURL
         self.stateFileURL = stateFileURL
-        self.wsAddress = wsAddress
-        self.wsPort = wsPort
+        self.daemonBindAddress = daemonBindAddress
+        self.daemonBindPort = daemonBindPort
         self.logLevel = logLevel
         self.startupTimeout = startupTimeout
         self.validatePaths = validatePaths
@@ -129,10 +132,8 @@ final class DSPManager {
     }
 
     func applyPreferences(_ preferences: WaveDaemonPreferencesSnapshot = WaveDaemonPreferences.load()) {
-        if let endpoint = WaveDaemonPreferences.parseWebSocketEndpoint(from: preferences.preferredWebSocketURL) {
-            wsAddress = endpoint.host
-            wsPort = endpoint.port
-        }
+        daemonBindAddress = preferences.daemonBindAddress
+        daemonBindPort = preferences.daemonBindPort
 
         autoRouteSystemOutput = preferences.autoRouteSystemOutput
         processingOutputDevice = preferences.processingOutputDevice
@@ -143,12 +144,13 @@ final class DSPManager {
             return
         }
 
-        wsAddress = host
-        wsPort = port
+        daemonBindAddress = host
+        daemonBindPort = port
     }
 
     func isWebSocketReachable(timeout: TimeInterval = 0.2) -> Bool {
-        portProbe(wsAddress, wsPort, timeout)
+        let probeHost = probeHostForDaemonBindAddress(daemonBindAddress)
+        return portProbe(probeHost, daemonBindPort, timeout)
     }
 
     @discardableResult
@@ -157,8 +159,9 @@ final class DSPManager {
             return false
         }
 
-        _ = ensureProcessingRoute()
-
+        // Transactional startup contract:
+        // 1) validate paths, 2) launch process, 3) wait for readiness,
+        // 4) route output, 5) rollback/cleanup on any failure.
         if validatePaths {
             guard fileManager.isExecutableFile(atPath: executableURL.path) else {
                 throw DSPManagerError.executableNotFound(executableURL.path)
@@ -179,8 +182,8 @@ final class DSPManager {
         process.arguments = [
             "--loglevel", logLevel,
             "--logfile", logFileURL.path,
-            "--address", wsAddress,
-            "--port", String(wsPort),
+            "--address", daemonBindAddress,
+            "--port", String(daemonBindPort),
             "--statefile", stateFileURL.path,
             configURL.path,
         ]
@@ -191,7 +194,7 @@ final class DSPManager {
                 let status = terminatedProcess.terminationStatus
                 DispatchQueue.main.async {
                     guard let self else { return }
-                    if let active = self.process as? Process, active === terminatedProcess {
+                    if let activeProcess = self.process as? Process, activeProcess === terminatedProcess {
                         self.process = nil
                     }
                     self.lastExitStatus = status
@@ -203,6 +206,7 @@ final class DSPManager {
         try process.run()
         lastExitStatus = nil
 
+        let probeHost = probeHostForDaemonBindAddress(daemonBindAddress)
         let deadline = Date().addingTimeInterval(startupTimeout)
         while Date() < deadline {
             if !process.isRunning {
@@ -213,7 +217,18 @@ final class DSPManager {
 
             let remaining = deadline.timeIntervalSinceNow
             let probeTimeout = min(0.2, max(0.05, remaining))
-            if portProbe(wsAddress, wsPort, probeTimeout) {
+            if portProbe(probeHost, daemonBindPort, probeTimeout) {
+                if autoRouteSystemOutput {
+                    let _ = ensureProcessingRoute()
+                    if !isRoutedToProcessingDevice() {
+                        process.terminate()
+                        self.process = nil
+                        _ = restoreSystemOutputRouteIfNeeded()
+                        throw DSPManagerError.routingFailed(
+                            "CamillaDSP started but output routing to \(processingOutputDevice) failed"
+                        )
+                    }
+                }
                 self.process = process
                 return true
             }
@@ -230,8 +245,8 @@ final class DSPManager {
         process.terminate()
         self.process = nil
         throw DSPManagerError.webSocketNeverBecameReady(
-            host: wsAddress,
-            port: wsPort,
+            host: probeHost,
+            port: daemonBindPort,
             logTail: readLogTail()
         )
     }
@@ -524,14 +539,12 @@ final class DSPManager {
         WaveDaemonPreferences.currentWebSocketURL()
     }
 
-    private static func defaultWebSocketAddress() -> String {
-        WaveDaemonPreferences.parseWebSocketEndpoint(from: WaveDaemonPreferences.currentWebSocketURL())?.host
-            ?? "127.0.0.1"
+    private static func defaultDaemonBindAddress() -> String {
+        WaveDaemonPreferences.currentDaemonBindAddress()
     }
 
-    private static func defaultWebSocketPort() -> Int {
-        WaveDaemonPreferences.parseWebSocketEndpoint(from: WaveDaemonPreferences.currentWebSocketURL())?.port
-            ?? 1234
+    private static func defaultDaemonBindPort() -> Int {
+        WaveDaemonPreferences.currentDaemonBindPort()
     }
 
     nonisolated private static func defaultPortProbe(host: String, port: Int, timeout: TimeInterval) -> Bool {
@@ -641,5 +654,23 @@ final class DSPManager {
         let stderr = String(data: errorData, encoding: .utf8) ?? ""
 
         return (process.terminationStatus, stdout + stderr)
+    }
+
+    private func isRoutedToProcessingDevice() -> Bool {
+        guard autoRouteSystemOutput, let switchAudioSourcePath else {
+            return true
+        }
+        return currentOutputDeviceName(switchAudioSourcePath: switchAudioSourcePath) == processingOutputDevice
+    }
+
+    private func probeHostForDaemonBindAddress(_ address: String) -> String {
+        let normalized = address.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalized == "0.0.0.0" || normalized == "*" {
+            return "127.0.0.1"
+        }
+        if normalized == "::" {
+            return "::1"
+        }
+        return address
     }
 }

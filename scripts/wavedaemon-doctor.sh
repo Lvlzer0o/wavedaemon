@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$SCRIPT_DIR/camilladsp-ws-env.sh"
 
 RUNTIME_DIR="${CAMILLADSP_RUNTIME_DIR:-$REPO_ROOT/.runtime}"
 CONFIG="${CAMILLADSP_CONFIG:-$REPO_ROOT/dsp/config.yml}"
@@ -10,7 +11,10 @@ CAMILLADSP_PIDFILE="${CAMILLADSP_PIDFILE:-$RUNTIME_DIR/camilladsp.pid}"
 KEEPALIVE_PIDFILE="${CAMILLADSP_KEEPALIVE_PIDFILE:-$RUNTIME_DIR/keepalive.pid}"
 UI_PIDFILE="${CAMILLADSP_UI_PIDFILE:-$RUNTIME_DIR/ui-server.pid}"
 
-WS_PORT="${CAMILLADSP_WS_PORT:-1234}"
+DAEMON_BIND_ADDRESS="$(camilladsp_bind_address)"
+DAEMON_BIND_PORT="$(camilladsp_bind_port)"
+LOCAL_PROBE_HOST="$(camilladsp_probe_host "$DAEMON_BIND_ADDRESS")"
+CLIENT_WS_URL="$(camilladsp_client_ws_url)"
 UI_PORT="${CAMILLADSP_UI_PORT:-9137}"
 
 MULTI_OUTPUT_NAME="${CAMILLADSP_MULTI_OUTPUT_NAME:-System DSP Output}"
@@ -182,6 +186,11 @@ check_sample_rate() {
 
 printf 'WaveDaemon Doctor\n'
 
+section "WebSocket Topology"
+report_ok "Daemon bind: $DAEMON_BIND_ADDRESS:$DAEMON_BIND_PORT"
+report_ok "Local probe endpoint: ws://$LOCAL_PROBE_HOST:$DAEMON_BIND_PORT"
+report_ok "Client connect URL: $CLIENT_WS_URL"
+
 section "Dependencies"
 check_dependency camilladsp "camilladsp"
 check_dependency SwitchAudioSource "SwitchAudioSource"
@@ -245,7 +254,7 @@ else
 fi
 
 section "Ports"
-check_port "$WS_PORT" "CamillaDSP WebSocket"
+check_port "$DAEMON_BIND_PORT" "CamillaDSP WebSocket bind"
 check_port "$UI_PORT" "Control UI"
 
 section "Config"

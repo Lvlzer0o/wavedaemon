@@ -2,9 +2,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+RUNTIME_DIR="${CAMILLADSP_RUNTIME_DIR:-$REPO_ROOT/.runtime}"
 SYSTEM_OUTPUT_DEVICE="${1:-}"
 START_SCRIPT="${SCRIPT_DIR}/start-audio-dsp.sh"
 KEEPALIVE_SCRIPT="${SCRIPT_DIR}/audio-stream-keepalive.sh"
+PREVIOUS_OUTPUT_STATEFILE="${CAMILLADSP_PREVIOUS_OUTPUT_STATEFILE:-$RUNTIME_DIR/previous_output_device}"
 AUTO_KEEPALIVE="${CAMILLADSP_AUTO_KEEPALIVE:-0}"
 PREFERRED_MULTI_OUTPUT_NAME="${CAMILLADSP_MULTI_OUTPUT_NAME:-System DSP Output}"
 FALLBACK_MULTI_OUTPUT_NAME="${CAMILLADSP_MULTI_OUTPUT_FALLBACK:-Multi-Output Device}"
@@ -82,6 +85,10 @@ restore_previous_output_on_failure() {
   local exit_code=$?
   set +e
 
+  if [[ "$STARTUP_SUCCESS" != "1" && "$AUTO_KEEPALIVE" == "1" && -x "$KEEPALIVE_SCRIPT" ]]; then
+    "$KEEPALIVE_SCRIPT" stop >/dev/null 2>&1 || true
+  fi
+
   if [[ "$STARTUP_SUCCESS" != "1" && "$OUTPUT_SWITCHED" == "1" && -n "$PREVIOUS_OUTPUT_DEVICE" ]]; then
     if output_device_exists "$PREVIOUS_OUTPUT_DEVICE"; then
       SwitchAudioSource -s "$PREVIOUS_OUTPUT_DEVICE" -t output >/dev/null 2>&1
@@ -100,6 +107,7 @@ if ! command -v SwitchAudioSource >/dev/null 2>&1; then
   exit 1
 fi
 
+mkdir -p "$RUNTIME_DIR"
 trap restore_previous_output_on_failure EXIT
 PREVIOUS_OUTPUT_DEVICE="$(SwitchAudioSource -c -t output 2>/dev/null || true)"
 
@@ -129,15 +137,22 @@ else
   echo "System output set to: $SYSTEM_OUTPUT_DEVICE"
 fi
 
+"$START_SCRIPT"
+
 if [[ "$AUTO_KEEPALIVE" == "1" ]]; then
   if [[ -x "$KEEPALIVE_SCRIPT" ]]; then
-    "$KEEPALIVE_SCRIPT" start || true
+    if ! "$KEEPALIVE_SCRIPT" start; then
+      "$SCRIPT_DIR/stop-audio-dsp.sh" >/dev/null 2>&1 || true
+      exit 1
+    fi
   else
     echo "Keepalive script not found: $KEEPALIVE_SCRIPT"
+    "$SCRIPT_DIR/stop-audio-dsp.sh" >/dev/null 2>&1 || true
+    exit 1
   fi
 fi
 
-"$START_SCRIPT"
+printf '%s\n' "$PREVIOUS_OUTPUT_DEVICE" > "$PREVIOUS_OUTPUT_STATEFILE"
 STARTUP_SUCCESS=1
 
 echo
