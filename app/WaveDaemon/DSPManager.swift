@@ -144,8 +144,8 @@ final class DSPManager {
             return
         }
 
-        wsAddress = host
-        wsPort = port
+        daemonBindAddress = host
+        daemonBindPort = port
     }
 
     func isWebSocketReachable(timeout: TimeInterval = 0.2) -> Bool {

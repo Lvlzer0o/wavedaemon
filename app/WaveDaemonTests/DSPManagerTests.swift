@@ -282,6 +282,8 @@ final class DSPManagerTests: XCTestCase {
         manager.applyPreferences(
             WaveDaemonPreferencesSnapshot(
                 preferredWebSocketURL: "ws://127.0.0.1:1234",
+                daemonBindAddress: "127.0.0.1",
+                daemonBindPort: 1234,
                 autoRouteSystemOutput: false,
                 processingOutputDevice: "System DSP Output",
                 autoConnectOnLaunch: false
