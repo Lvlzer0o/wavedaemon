@@ -5,74 +5,58 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![GitHub Release](https://img.shields.io/github/v/release/Lvlzer0o/wavedaemon)
 
-System-wide audio DSP daemon for macOS.
+WaveDaemon is a macOS audio-DSP toolkit built around **CamillaDSP**, **BlackHole**, and a live **WebSocket control surface**. It provides a repeatable way to route system audio through a configurable DSP chain, with scripts for setup, validation, and fail-safe operation.
 
-WaveDaemon is a production-focused CoreAudio stack built around CamillaDSP, BlackHole, and a live WebSocket control UI.
+## What’s in this repo
+
+WaveDaemon currently includes:
+
+- A script-based DSP daemon workflow (`scripts/`) that starts/stops CamillaDSP and health tooling.
+- DSP configuration and profiles (`dsp/`) including EQ/reverb profile variants.
+- A browser-based control UI (`ui/control.html`).
+- A native SwiftUI macOS app (`app/WaveDaemon`) and tests (`app/WaveDaemonTests`).
+- Documentation and diagrams (`docs/`).
 
 ## Architecture
 
 ![WaveDaemon Architecture](docs/architecture.svg)
 
-Signal path:
+### Audio signal path
 
 ```text
 macOS
-↓
-<multi-output-device>
-↓
-BlackHole 2ch
-↓
-WaveDaemon (CamillaDSP engine)
-↓
-<aggregate-output-device>
-↓
-Built-in speakers / output device
+→ Multi-Output Device (example: System DSP Output)
+→ BlackHole 2ch
+→ WaveDaemon (CamillaDSP engine)
+→ Aggregate Output Device (example: DSP Aggregate)
+→ Built-in speakers / external output
 ```
 
-Control plane:
+### Control path
 
 ```text
-Browser UI
-↓
-WebSocket (ws://127.0.0.1:1234)
-↓
-CamillaDSP
-↓
-Live DSP updates (volume, mute, profiles, 10-band EQ)
+Browser UI or native app
+→ WebSocket client connection (example: ws://127.0.0.1:1234)
+→ CamillaDSP
+→ Live DSP updates (volume, mute, profiles, EQ)
 ```
 
 ## Demo
 
 ![WaveDaemon Demo](docs/wavedaemon-demo.gif)
 
-## Repository Layout
+## Repository layout
 
 ```text
 wavedaemon/
-├── dsp/
-│   ├── config.yml
-│   └── profiles/
-├── scripts/
-│   ├── start-audio-dsp.sh
-│   ├── stop-audio-dsp.sh
-│   ├── start-audio-dsp-failsafe.sh
-│   ├── stop-audio-dsp-failsafe.sh
-│   ├── wavedaemon-doctor.sh
-│   ├── install-deps.sh
-│   ├── start-audio-control-ui.sh
-│   ├── stop-audio-control-ui.sh
-│   └── audio-stream-keepalive.sh
-├── ui/
-│   └── control.html
-├── tools/
-│   └── latency-test.sh
-├── docs/
-│   ├── architecture.svg
-│   ├── wavedaemon-demo.gif
-│   └── routing.md
+├── app/                        # Native macOS app (SwiftUI) + tests
+├── docs/                       # Architecture, routing, demo assets
+├── dsp/                        # CamillaDSP config, profiles, IR assets
+├── scripts/                    # Start/stop, keepalive, install, doctor
+├── tools/                      # Utility tools (latency estimator, helpers)
+├── ui/                         # Browser control surface
 ├── README.md
-├── LICENSE
-└── .gitignore
+└── LICENSE
 ```
 
 ## Prerequisites
@@ -80,12 +64,13 @@ wavedaemon/
 - macOS
 - Homebrew
 - `blackhole-2ch`
-- `camilladsp` binary available via `PATH` or `CAMILLADSP_BIN`
+- `camilladsp` (available in `PATH` or via `CAMILLADSP_BIN`)
 - `switchaudio-osx`
 - `websocat`
 - `jq`
+- `python3`
 
-## Install
+## Install dependencies
 
 ```bash
 ./scripts/install-deps.sh
@@ -98,66 +83,75 @@ brew install camilladsp switchaudio-osx websocat jq
 brew install --cask blackhole-2ch
 ```
 
-## Quick Start
+## Quick start
 
 1. Configure routing in Audio MIDI Setup (see [`docs/routing.md`](docs/routing.md)).
 2. Start DSP from repo root:
 
-```bash
-CAMILLADSP_AUTO_KEEPALIVE=1 ./scripts/start-audio-dsp-failsafe.sh
-```
+   ```bash
+   CAMILLADSP_AUTO_KEEPALIVE=1 ./scripts/start-audio-dsp-failsafe.sh
+   ```
 
-3. Start UI:
+3. Start the browser UI server:
 
-```bash
-./scripts/start-audio-control-ui.sh
-```
+   ```bash
+   ./scripts/start-audio-control-ui.sh
+   ```
 
 4. Open:
 
-`http://127.0.0.1:9137/ui/control.html?ws=ws://127.0.0.1:1234`
+   ```text
+   http://127.0.0.1:9137/ui/control.html?ws=ws://127.0.0.1:1234
+   ```
 
 Suggested CoreAudio device names used in examples:
 
-- `<multi-output-device>`: `System DSP Output`
-- `<aggregate-output-device>`: `DSP Aggregate`
+- Multi-output device: `System DSP Output`
+- Aggregate output device: `DSP Aggregate`
 
-Optional overrides:
+## Environment variables
+
+### Output/routing behavior
 
 - `CAMILLADSP_MULTI_OUTPUT_NAME`
 - `CAMILLADSP_MULTI_OUTPUT_FALLBACK`
 - `CAMILLADSP_SAFE_OUTPUT_FALLBACK` (default: `Built-in Output`)
-- `CAMILLADSP_ALLOW_RAW_OUTPUT_FALLBACK` (`1` to allow auto-fallback to `CAMILLADSP_RAW_OUTPUT_FALLBACK`)
+- `CAMILLADSP_ALLOW_RAW_OUTPUT_FALLBACK` (`1` enables auto-fallback to raw output)
 - `CAMILLADSP_RAW_OUTPUT_FALLBACK` (default: `BlackHole 2ch`)
 - `CAMILLADSP_STOP_OUTPUT_DEVICE`
 
-WebSocket bind/connect split (migration-safe defaults):
+### WebSocket topology
 
-- **Daemon bind** (where locally spawned CamillaDSP listens): `CAMILLADSP_BIND_ADDRESS`, `CAMILLADSP_BIND_PORT`
-- **Client connect URL** (what UI/app connects to): `CAMILLADSP_CLIENT_WS_URL`
-- Backward compatibility: if bind vars are not set, daemon bind falls back to `CAMILLADSP_WS_ADDRESS` / `CAMILLADSP_WS_PORT`; existing saved `preferredWebSocketURL` values continue to control client connection only.
+- **Daemon bind** (where locally spawned CamillaDSP listens):
+  - `CAMILLADSP_BIND_ADDRESS`
+  - `CAMILLADSP_BIND_PORT`
+- **Client connect URL** (what UI/app connects to):
+  - `CAMILLADSP_CLIENT_WS_URL`
+- Backward compatibility:
+  - If bind vars are not set, daemon bind falls back to `CAMILLADSP_WS_ADDRESS` / `CAMILLADSP_WS_PORT`.
+  - Existing saved `preferredWebSocketURL` values continue to affect client connection behavior.
 
-## Doctor
+## Health checks (Doctor)
 
-Run health checks before or after setup:
+Run setup/runtime checks before or after configuration:
 
 ```bash
 ./scripts/wavedaemon-doctor.sh
 ```
 
-Checks include:
+Doctor validates:
 
-- dependencies (`camilladsp`, `SwitchAudioSource`, `websocat`, `jq`, `python3`)
-- effective WebSocket topology (daemon bind, local probe, client connect URL)
+- dependency availability (`camilladsp`, `SwitchAudioSource`, `websocat`, `jq`, `python3`)
+- WebSocket bind/connect topology and local probe behavior
 - required audio devices (`BlackHole 2ch`, aggregate, multi-output/fallback)
-- sample rates (target default: `48000 Hz`)
-- port availability (effective daemon bind port, `9137`)
-- config validation (`camilladsp --check`)
+- sample-rate expectations (default target: `48000 Hz`)
+- port availability (effective daemon bind port, UI port `9137`)
+- config validity (`camilladsp --check`)
 - runtime status (CamillaDSP, keepalive, UI server)
 
-## Validate
+## Runtime validation
 
-Adjust host and port to match your deployment. If the daemon binds to `0.0.0.0` or `*`, use `127.0.0.1` for local readiness checks. If it binds to `::`, use `::1`.
+If daemon bind address is `0.0.0.0` or `*`, use `127.0.0.1` for local checks. If daemon bind is `::`, use `::1`.
 
 ```bash
 lsof -nP -iTCP:1234 -sTCP:LISTEN
@@ -165,9 +159,7 @@ printf '"GetVersion"\n' | websocat -n1 ws://127.0.0.1:1234
 printf '"GetState"\n' | websocat -n1 ws://127.0.0.1:1234
 ```
 
-## Latency
-
-Use the estimator:
+## Latency tooling
 
 ```bash
 ./tools/latency-test.sh
@@ -179,8 +171,8 @@ Recommended low-latency tuning target:
 - `chunksize: 256`
 - `target_level: 128`
 
-## Safety Notes
+## Safety notes
 
-- Keep main gain at `0 dB` unless you intentionally need boost.
-- Prefer limiter last in the chain.
-- Use fail-safe routing so audio continues even if DSP exits.
+- Keep master gain at `0 dB` unless intentional boost is required.
+- Prefer placing limiter stages at the end of the chain.
+- Use fail-safe routing so audio continues if DSP exits unexpectedly.
